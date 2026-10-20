@@ -143,6 +143,11 @@ Ou manualmente: `docker compose -f docker-compose.yml -f docker-compose.prod.yml
 
 O workflow em [`docs/ci/ci.yml`](docs/ci/ci.yml) (mova para `.github/workflows/` para ativar — veja [`docs/ci/README.md`](docs/ci/README.md)) executa em cada push/PR: `ruff check`, `ruff format --check`, `pytest` (com teste de migração em PostgreSQL 15), `next lint`, `tsc --noEmit`, `next build`, validação do `docker compose config`, `shellcheck` e build das imagens Docker.
 
+## Documentação
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md)
+- [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) — guia para usar agentes de IA (Claude Code, Cursor, Copilot, Aider) e prompts para as etapas restantes; regras em [`AGENTS.md`](AGENTS.md)
+
 ## Segurança
 
 Veja [`docs/SECURITY.md`](docs/SECURITY.md). Resumo: nunca faça commit do `.env`; chaves Binance só com permissão de leitura + futuros (sem saque) e whitelist de IP; JWT em cookie `httpOnly`; credenciais criptografadas em repouso; execução simulada por padrão.
