@@ -1,0 +1,25 @@
+# Reverse proxy com HTTPS automático (Let's Encrypt) quando DOMAIN for um domínio público.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN:localhost} {
+	encode gzip zstd
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	@api path /api/* /health /docs /openapi.json
+	handle @api {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
