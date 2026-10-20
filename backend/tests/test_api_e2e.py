@@ -30,7 +30,7 @@ async def test_register_login_me_refresh_logout(client) -> None:
     data = await register_login(client, "owner@example.com")
     assert data["user"]["role"] == "admin"  # first user = super-admin
     # cookies set by login (httpOnly) are enough for authenticated calls
-    assert "access_token" in client.cookies
+    assert "access_token" in client.cookies and client.cookies.get("btp_session") == "1"
     r = await client.get("/api/v1/auth/me")
     assert r.status_code == 200 and r.json()["email"] == "owner@example.com"
     assert r.json()["active_workspace_id"]

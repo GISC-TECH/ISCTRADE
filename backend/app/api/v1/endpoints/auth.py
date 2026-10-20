@@ -25,6 +25,8 @@ from app.services.audit import log_event
 
 router = APIRouter()
 REFRESH_COOKIE_NAME = "refresh_token"
+# Non-sensitive marker readable by the Next.js middleware (the refresh cookie is path-scoped to the API).
+SESSION_MARKER_COOKIE = "btp_session"
 REFRESH_PATH = f"{settings.API_V1_PREFIX}/auth"
 
 
@@ -40,6 +42,15 @@ def issue_tokens(response: Response, user: User) -> TokenResponse:
     response.set_cookie(
         REFRESH_COOKIE_NAME, refresh, max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400, path=REFRESH_PATH, **opts
     )
+    response.set_cookie(
+        SESSION_MARKER_COOKIE,
+        "1",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
+        path="/",
+        secure=settings.COOKIE_SECURE,
+        samesite="lax",
+        domain=settings.COOKIE_DOMAIN or None,
+    )
     return TokenResponse(
         access_token=access,
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
@@ -51,6 +62,7 @@ def clear_tokens(response: Response) -> None:
     opts = {"domain": settings.COOKIE_DOMAIN or None}
     response.delete_cookie(ACCESS_COOKIE_NAME, path="/", **opts)
     response.delete_cookie(REFRESH_COOKIE_NAME, path=REFRESH_PATH, **opts)
+    response.delete_cookie(SESSION_MARKER_COOKIE, path="/", **opts)
 
 
 @router.post(
