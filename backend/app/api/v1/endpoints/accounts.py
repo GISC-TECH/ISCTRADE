@@ -8,11 +8,13 @@ from app.api.deps import get_active_workspace, get_current_user
 from app.core.database import get_db
 from app.core.security import Role, encrypt_api_key, has_role
 from app.models.account import Account
-from app.models.enums import AccountStatus
+from app.models.enums import AccountStatus, ExecutionMode
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.schemas.account import AccountCreate, AccountDashboard, AccountRead
+from app.services.accounts import client_for_account
 from app.services.audit import log_event
+from app.services.dashboard import build_dashboard
 
 router = APIRouter()
 
@@ -71,8 +73,14 @@ async def account_dashboard(
     db: AsyncSession = Depends(get_db),
 ) -> AccountDashboard:
     account = await _get_account(account_id, workspace, db)
-    # TODO: buscar saldo/posições reais via BinanceFuturesClient (cacheado no Redis).
-    return AccountDashboard(account_id=account.id, status=account.status)
+    client = None
+    if account.execution_mode == ExecutionMode.LIVE:
+        client = client_for_account(account)
+    try:
+        return AccountDashboard(**(await build_dashboard(db, account, client)))
+    finally:
+        if client is not None:
+            await client.close()
 
 
 @router.post("/{account_id}/start", response_model=AccountRead)
