@@ -52,6 +52,15 @@ class Settings(BaseSettings):
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = 60
 
+    # Execution safety. Real orders require BOTH this flag AND account.execution_mode == "live".
+    LIVE_TRADING_ENABLED: bool = False
+    PAPER_TAKER_FEE: float = 0.0004  # 0.04%
+    PAPER_SLIPPAGE_BPS: float = 2.0
+    KILL_SWITCH_CLOSE_POSITIONS: bool = True
+    BOT_TICK_SECONDS: int = 30
+    RECONCILE_SECONDS: int = 60
+    EQUITY_SNAPSHOT_SECONDS: int = 300
+
     # Risk defaults
     RISK_MAX_RISK_PER_TRADE_PCT: float = 1.0
     RISK_MAX_LEVERAGE: int = 5

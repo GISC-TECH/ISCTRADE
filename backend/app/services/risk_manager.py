@@ -7,6 +7,7 @@ Rules (evaluated in this order):
   3. Mandatory stop loss   - every opening order needs a stop loss on the correct side of entry.
   4. Leverage limit        - leverage <= `max_leverage`.
   5. Max risk per trade    - qty * |entry - stop| <= equity * `max_risk_per_trade_pct` / 100.
+  6. Margin                - notional / leverage <= equity.
 Reduce-only orders (closing/de-risking) are always allowed, so positions can be closed
 even when the kill switch is active.
 """
@@ -115,7 +116,24 @@ class RiskManager:
         if risk > max_risk:
             return RiskDecision(False, f"max_risk_per_trade: risk {risk:.2f} > allowed {max_risk:.2f} USDT")
 
+        margin = order.quantity * order.entry_price / Decimal(order.leverage)
+        if margin > account.equity:
+            return RiskDecision(False, f"insufficient_margin: required {margin:.2f} > equity {account.equity:.2f} USDT")
+
         return RiskDecision(True, self.OK)
+
+    @classmethod
+    def from_account(cls, account, equity: Decimal) -> AccountRiskState:
+        """Build the risk state from an Account ORM row and its current equity."""
+        return AccountRiskState(
+            equity=equity,
+            peak_equity=max(Decimal(account.peak_equity or equity), equity),
+            day_start_equity=Decimal(account.day_start_equity or equity),
+            max_risk_per_trade_pct=Decimal(account.max_risk_per_trade_pct),
+            max_leverage=int(account.max_leverage),
+            max_daily_loss_pct=Decimal(account.max_daily_loss_pct),
+            max_drawdown_pct=Decimal(account.max_drawdown_pct),
+        )
 
     def validate_order(self, order: OrderRequest, account: AccountRiskState) -> tuple[bool, str]:
         decision = self.evaluate(order, account)

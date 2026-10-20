@@ -16,7 +16,7 @@ def account(**kw) -> AccountRiskState:
 def order(**kw) -> OrderRequest:
     # Long 1 BTC @ 50000, stop 49950 -> risk 50 USDT (0.5% of 10k)
     base = dict(
-        symbol="BTCUSDT", side=Side.BUY, quantity=D("1"), entry_price=D("50000"), stop_loss=D("49950"), leverage=3
+        symbol="BTCUSDT", side=Side.BUY, quantity=D("1"), entry_price=D("50000"), stop_loss=D("49950"), leverage=5
     )
     base.update(kw)
     return OrderRequest(**base)

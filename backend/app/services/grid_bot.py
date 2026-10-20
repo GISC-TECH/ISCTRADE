@@ -1,11 +1,16 @@
-"""Grid bot service (placeholder).
+"""Grid bot: BotRunner specialised for the grid strategy.
 
-Generates a price grid between lower/upper bounds; every order produced here
-must be validated by RiskManager before reaching BinanceFuturesClient.
+`GridBot.tick()` runs a full cycle: fetch closed candles -> grid strategy decides buys/sells
+-> every order validated by RiskManager -> executed (paper by default) -> runtime state saved.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+
+from app.services.bot_runner import BotRunner, TickResult
+from app.strategy.grid import GridStrategy, grid_levels
 
 
 @dataclass
@@ -15,21 +20,29 @@ class GridConfig:
     upper_price: Decimal
     levels: int
     quantity_per_level: Decimal
+    stop_loss_pct: Decimal = Decimal("3")
     leverage: int = 1
+
+    def as_params(self) -> dict:
+        return {
+            "lower_price": float(self.lower_price),
+            "upper_price": float(self.upper_price),
+            "levels": self.levels,
+            "quantity_per_level": float(self.quantity_per_level),
+            "stop_loss_pct": float(self.stop_loss_pct),
+        }
 
 
 def build_grid(config: GridConfig) -> list[Decimal]:
-    if config.levels < 2 or config.upper_price <= config.lower_price:
-        raise ValueError("invalid grid configuration")
-    step = (config.upper_price - config.lower_price) / (config.levels - 1)
-    return [config.lower_price + step * i for i in range(config.levels)]
+    return grid_levels(config.lower_price, config.upper_price, config.levels)
 
 
-class GridBot:
-    def __init__(self, config: GridConfig) -> None:
-        self.config = config
-        self.levels = build_grid(config)
+class GridBot(BotRunner):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        if self.bot.strategy_key != GridStrategy.key:
+            raise ValueError("GridBot requires a bot configured with the 'grid' strategy")
+        GridStrategy.validate_params(self.bot.params)
 
-    async def tick(self) -> None:
-        """TODO: reconcile grid orders with exchange state and replace filled levels."""
-        raise NotImplementedError
+    async def tick(self) -> TickResult:
+        return await super().tick()
