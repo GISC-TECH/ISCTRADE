@@ -85,6 +85,32 @@ class Settings(BaseSettings):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.lower() == "production"
+
+    def production_problems(self) -> list[str]:
+        """Configuration errors that must block startup in production (never includes secret values)."""
+        import base64
+        import binascii
+
+        problems: list[str] = []
+        if "CHANGE_ME" in self.JWT_SECRET or len(self.JWT_SECRET) < 32:
+            problems.append("JWT_SECRET ausente/fraco (mínimo 32 caracteres aleatórios)")
+        try:
+            key_ok = len(base64.b64decode(self.MASTER_ENCRYPTION_KEY, validate=True)) == 32
+        except (binascii.Error, ValueError):
+            key_ok = False
+        if not key_ok:
+            problems.append("MASTER_ENCRYPTION_KEY deve ser base64 de 32 bytes")
+        if "CHANGE_ME" in self.DATABASE_URL:
+            problems.append("DATABASE_URL contém CHANGE_ME")
+        if not self.COOKIE_SECURE:
+            problems.append("COOKIE_SECURE deve ser true em produção")
+        if self.DEBUG:
+            problems.append("DEBUG deve ser false em produção")
+        return problems
+
 
 @lru_cache
 def get_settings() -> Settings:

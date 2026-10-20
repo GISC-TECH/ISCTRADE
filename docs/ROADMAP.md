@@ -1,45 +1,61 @@
 # Roadmap
 
 > Avance de fase **somente** quando todos os critérios da fase atual estiverem cumpridos.
+> Itens marcados indicam que a **funcionalidade existe no código**; os critérios operacionais (tempo em paper,
+> testes em produção) dependem de quem opera a instância.
 
-## Fase 0 — Fundação (scaffold)
+## Fase 0 — Fundação
 - [x] Estrutura do repositório (backend, frontend, docs, infra)
-- [x] Autenticação (registro, login com cookie httpOnly, `/me`)
+- [x] Autenticação (registro, login com cookie httpOnly, refresh, `/me`, logout de todas as sessões)
 - [x] Modelos de usuário, workspace e conta com chaves criptografadas (AES-256-GCM)
 - [x] RiskManager determinístico com testes unitários
 - [x] Cliente REST assíncrono da Binance USDT-M Futures
-- [ ] Primeira migração Alembic
-- [ ] CI (lint + testes)
+- [x] Primeira migração Alembic (testada com upgrade/downgrade/check em PostgreSQL)
+- [x] CI (lint + testes + build) — workflow pronto em `docs/ci/ci.yml`
+- [ ] Ativar o workflow movendo-o para `.github/workflows/` (requer token/conta com escopo `workflow`)
+- [x] Trilha de auditoria com mascaramento de dados sensíveis
 
 ## Fase 1 — Backtest
-- [ ] Download e armazenamento de klines históricos
-- [ ] Motor de backtest com taxas, funding e slippage
-- [ ] Implementar primeira estratégia (ex.: grid) sobre a interface `Strategy`
-- [ ] Integrar RiskManager no backtest
-- [ ] Relatórios: retorno, drawdown máximo, Sharpe, win rate, profit factor
+- [x] Download de klines históricos (API pública da Binance) e importação de CSV
+- [x] Motor de backtest com taxas e slippage (stops com *gap*)
+- [ ] Custos de *funding* no backtest
+- [x] Estratégias sobre a interface `Strategy` (grid, cruzamento de EMAs, RSI + Bollinger)
+- [x] Integrar RiskManager no backtest
+- [x] Relatórios: retorno, drawdown máximo, Sharpe, win rate, profit factor, buy & hold
 - [ ] Testes walk-forward / out-of-sample
+- [ ] Armazenamento local de klines (cache) para backtests repetidos
 
 ## Fase 2 — Dry-run / Paper trading
-- [ ] Execução em tempo real na Testnet da Binance
-- [ ] WebSocket de mercado e user data stream
-- [ ] Máquina de estados do bot integrada às tasks Celery
-- [ ] Reconciliador de ordens/posições
-- [ ] Comparar resultados do paper com o backtest por ≥ 4 semanas
+- [x] Execução simulada (paper) como padrão, com taxa/slippage configuráveis
+- [x] Execução em tempo real com dados da Testnet da Binance
+- [x] WebSocket de mercado e user data stream (reconexão + keepalive do listenKey)
+- [x] Máquina de estados do bot integrada às tasks Celery (worker + beat)
+- [x] Reconciliador de ordens/posições
+- [x] Kill switch por conta (drawdown) e kill switch global (admin)
+- [ ] Comparar resultados do paper com o backtest por ≥ 4 semanas *(operacional)*
 
 ## Fase 3 — Conta real mínima
-- [ ] Chaves sem permissão de saque e com whitelist de IP
-- [ ] Capital mínimo, alavancagem ≤ 2x, risco por trade ≤ 0,5%
+- [x] Dupla trava para ordens reais (`LIVE_TRADING_ENABLED` + `execution_mode=live` por conta)
+- [x] Stop loss de proteção (`STOP_MARKET` reduce-only) enviado junto da ordem real
+- [ ] Chaves sem permissão de saque e com whitelist de IP *(operacional — ver SECURITY.md)*
+- [ ] Capital mínimo, alavancagem ≤ 2x, risco por trade ≤ 0,5% *(configuração por conta)*
 - [ ] Kill switch testado em produção (simulação controlada)
-- [ ] Runbook de incidentes (como pausar, fechar posições, revogar chaves)
+- [ ] Runbook de incidentes completo (rascunho em SECURITY.md)
 
 ## Fase 4 — Monitoramento e logs
-- [ ] Logs estruturados e trilha de auditoria imutável
+- [x] Trilha de auditoria por workspace e global
+- [x] Dashboards de equity (snapshots periódicos)
+- [x] Health checks em todos os serviços Docker
+- [x] Script de backup do PostgreSQL com retenção (e backup automático antes de cada deploy)
+- [ ] Logs estruturados (JSON) e trilha de auditoria imutável (append-only/assinada)
 - [ ] Alertas (Telegram/e-mail) para erros, kill switch e divergências
-- [ ] Métricas (Prometheus/Grafana) e dashboards de equity
-- [ ] Backups automáticos e testados do PostgreSQL
+- [ ] Métricas (Prometheus/Grafana)
+- [ ] Teste periódico de restauração de backup
 
 ## Fase 5 — Escala de capital
+- [x] Múltiplas contas/workspaces com limites de risco por conta
+- [ ] Limites de risco agregados entre contas
 - [ ] Critérios objetivos para aumento de capital (ex.: 3 meses com drawdown dentro do limite)
 - [ ] Aumentos graduais (ex.: +25% por etapa) com revisão de risco
-- [ ] Múltiplas contas/workspaces e limites de risco agregados
 - [ ] Revisão de segurança externa
+- [ ] 2FA (TOTP) para login

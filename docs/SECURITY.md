@@ -1,32 +1,63 @@
 # Segurança
 
+## Modelo de ameaças (resumo)
+| Ativo | Ameaça principal | Mitigação |
+|---|---|---|
+| Chaves de API da Binance | Vazamento do banco/backup | AES-256-GCM com chave mestra fora do banco; chaves sem permissão de saque e com whitelist de IP |
+| Capital nas contas | Bug de estratégia, ordem indevida | Paper por padrão, dupla trava para ordens reais, RiskManager obrigatório, kill switches |
+| Sessões de usuários | Roubo de token, XSS, força bruta | Cookies `httpOnly`/`Secure`/`SameSite=Lax`, revogação por `token_version`, rate limiting, bcrypt |
+| Dados de outros tenants | Acesso entre workspaces | Filtro por `workspace_id` em todas as consultas, RBAC, AAD por workspace na criptografia |
+
 ## Segredos
-- **Nunca** faça commit de `.env`, chaves de API, certificados ou dumps de banco. O `.gitignore` já cobre esses casos; o repositório contém apenas `.env.example` com placeholders `CHANGE_ME`.
-- Gere `JWT_SECRET` e `MASTER_ENCRYPTION_KEY` com fontes criptograficamente seguras (veja o README).
-- Faça rotação periódica do `JWT_SECRET` (invalida sessões) e planeje rotação da `MASTER_ENCRYPTION_KEY` (requer re-criptografar as chaves armazenadas).
+- **Nunca** faça commit de `.env`, chaves de API, certificados ou dumps de banco. O `.gitignore` cobre esses casos; o repositório contém apenas `.env.example` com placeholders `CHANGE_ME`.
+- Gere `JWT_SECRET` (≥ 32 caracteres) e `MASTER_ENCRYPTION_KEY` (base64 de 32 bytes) com fontes criptograficamente seguras (veja o README).
+- Em `ENVIRONMENT=production` a API **recusa iniciar** com `JWT_SECRET`/`MASTER_ENCRYPTION_KEY` fracos ou placeholders, `COOKIE_SECURE=false` ou `DEBUG=true`; o `scripts/deploy.sh` faz as mesmas verificações antes do deploy.
+- **Rotação do `JWT_SECRET`**: troque o valor e reinicie `backend`, `celery_worker`, `celery_beat` e `streams` — todas as sessões são invalidadas.
+- **Rotação da `MASTER_ENCRYPTION_KEY`**: ainda não há comando automático. Procedimento: pare os serviços, reconecte as contas (ou re-criptografe com script próprio usando a chave antiga e a nova) e só então descarte a chave antiga. Perder a chave torna as chaves armazenadas irrecuperáveis (será necessário reconectar as contas).
+- Backups (`./backups`) contêm as chaves **criptografadas**; guarde a `MASTER_ENCRYPTION_KEY` separada dos backups.
 
 ## Chaves da Binance
 - Crie chaves **dedicadas** para a plataforma com permissões **Leitura + Futuros**. **Nunca** habilite saque (*withdrawals*).
-- Ative **restrição por IP** (IP do servidor).
-- As chaves são armazenadas com **AES-256-GCM** (nonce aleatório de 96 bits, autenticação via tag GCM, `workspace_id` como associated data). A API nunca devolve as chaves — apenas os 4 últimos caracteres.
-- Descriptografia ocorre apenas no momento do uso (worker), nunca é logada.
+- Ative **restrição por IP** (IP público do servidor).
+- As chaves são armazenadas com **AES-256-GCM** (nonce aleatório de 96 bits, tag de autenticação GCM, `workspace_id` como *associated data*). A API nunca devolve as chaves — apenas os 4 últimos caracteres.
+- A descriptografia ocorre somente no momento do uso; chaves e assinaturas nunca são registradas em log nem na auditoria (campos sensíveis são mascarados).
+
+## Execução de ordens
+- **Padrão seguro**: contas novas usam Testnet e `execution_mode=paper` (preenchimento simulado). Nenhuma ordem chega à corretora.
+- Ordens reais exigem **duas** travas: `LIVE_TRADING_ENABLED=true` no servidor **e** `execution_mode=live` na conta. Com qualquer uma desligada, o executor de paper é usado.
+- Toda ordem passa pelo `RiskManager`: kill switch por drawdown, perda diária, stop loss obrigatório, alavancagem máxima, risco por trade e margem disponível. Ordens *reduce-only* são sempre permitidas para que posições possam ser encerradas.
+- Ordens reais são acompanhadas de um `STOP_MARKET` *reduce-only* de proteção.
+- **Kill switch por conta**: drawdown acima do limite muda a conta para `killed`, para os bots e (com `KILL_SWITCH_CLOSE_POSITIONS=true`) encerra as posições. Só um admin do workspace pode resetar.
+- **Kill switch global** (super-admin, painel Admin): bloqueia novas ordens de abertura em todas as contas.
+- Os testes automatizados **sempre** simulam a Binance (transportes HTTP/WebSocket falsos); nenhuma ordem real é enviada pela suíte.
 
 ## Autenticação e autorização
-- Senhas com **bcrypt**.
-- JWT de acesso (curta duração) e refresh (longa duração) em cookies **httpOnly**, `SameSite=Lax`, `Secure` em produção.
-- RBAC com papéis `admin`, `trader`, `viewer`; isolamento de dados por workspace em todas as consultas.
-- Rate limiting via Redis nos endpoints sensíveis (login/registro).
+- Senhas com **bcrypt**. Troca de senha e "sair de todos os dispositivos" incrementam `token_version`, revogando todos os JWTs emitidos.
+- JWT de acesso (curta duração) e refresh (longa duração) em cookies **httpOnly**, `SameSite=Lax`, `Secure` em produção. O cookie de refresh tem `path=/api/v1/auth`. O cookie `btp_session` é apenas um marcador sem segredo, usado pelo middleware do Next.js para redirecionar ao login.
+- Rate limiting (Redis, com fallback em memória) em login e registro. `ALLOW_REGISTRATION=false` desativa novos cadastros.
+- RBAC por workspace: `admin` (gerencia contas, membros, reset de kill switch), `trader` (opera contas e bots), `viewer` (somente leitura). O dono do workspace é sempre `admin`. O papel global `admin` (super-admin) acessa o painel de administração.
+- Isolamento de dados por workspace em todas as consultas; o header `X-Workspace-ID` é validado contra a associação do usuário.
 
 ## Infraestrutura
-- Apenas o Caddy expõe portas públicas em produção (80/443). PostgreSQL e Redis ficam na rede interna.
-- Headers de segurança (HSTS, `X-Frame-Options`, `nosniff`) configurados no Caddy.
-- Containers rodam como usuário não-root.
-- Backups regulares e criptografados do PostgreSQL (`scripts/backup_db.sh` é um ponto de partida).
+- Apenas o Caddy expõe portas públicas em produção (80/443). PostgreSQL, Redis, backend e frontend ficam em redes internas (o override de produção remove as portas publicadas).
+- Headers de segurança (HSTS, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`) configurados no Caddy; documentação interativa da API desabilitada em produção.
+- Containers rodam como usuário não-root, com health checks.
+- Migrações executadas por um serviço dedicado (`migrate`) antes de API e workers; o `deploy.sh` faz backup do banco antes de migrar.
+- Mantenha o host atualizado, com firewall liberando apenas 22/80/443 e acesso SSH por chave.
 
-## Risco operacional
-- Toda ordem passa pelo `RiskManager` (stop loss obrigatório, risco por trade, alavancagem, perda diária, kill switch por drawdown).
-- Ordens *reduce-only* são sempre permitidas para que posições possam ser encerradas.
-- Contas em estado `killed` exigem revisão manual antes de serem reiniciadas.
+## Resposta a incidentes (runbook resumido)
+1. **Pare novas ordens**: ative o kill switch global no painel Admin (ou `POST /api/v1/admin/kill-switch`).
+2. **Encerre posições** se necessário diretamente na Binance.
+3. **Revogue as chaves de API** na Binance se houver suspeita de vazamento; reconecte com chaves novas depois.
+4. **Revogue sessões**: troque o `JWT_SECRET` e reinicie os serviços.
+5. **Investigue** pela trilha de auditoria (Admin → Auditoria global) e pelos logs (`docker compose logs`).
+6. **Restaure** um backup se houver corrupção de dados (`scripts/backup_db.sh` documenta a restauração).
+
+## Limitações conhecidas
+- Sem 2FA no login.
+- A trilha de auditoria é armazenada no mesmo banco (não é imutável/assinada).
+- Sem rotação automática da `MASTER_ENCRYPTION_KEY`.
+- Sem alertas automáticos (Telegram/e-mail) — monitore os health checks e o dashboard.
 
 ## Reporte de vulnerabilidades
-Envie relatos de forma privada aos mantenedores (não abra issues públicas com detalhes exploráveis).
+Envie relatos de forma privada aos mantenedores (não abra issues públicas com detalhes exploráveis). Inclua passos de reprodução e impacto; responderemos o mais rápido possível.

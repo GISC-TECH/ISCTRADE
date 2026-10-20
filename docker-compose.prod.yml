@@ -1,21 +1,38 @@
 # Overrides de produção: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Remove bind mounts/--reload e não publica portas internas (apenas o Caddy expõe 80/443).
+x-prod-env: &prod-env
+  ENVIRONMENT: production
+  DEBUG: "false"
+  COOKIE_SECURE: "true"
+
 services:
   frontend:
     ports: !reset []
 
+  migrate:
+    environment: *prod-env
+
   backend:
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips "*"
     volumes: !reset []
     ports: !reset []
-    environment:
-      ENVIRONMENT: production
-      DEBUG: "false"
-      COOKIE_SECURE: "true"
+    environment: *prod-env
 
   celery_worker:
     volumes: !reset []
     environment:
-      ENVIRONMENT: production
+      <<: *prod-env
+      DB_USE_NULLPOOL: "true"
+
+  celery_beat:
+    volumes: !reset []
+    environment:
+      <<: *prod-env
+      DB_USE_NULLPOOL: "true"
+
+  streams:
+    volumes: !reset []
+    environment: *prod-env
 
   postgres:
     ports: !reset []

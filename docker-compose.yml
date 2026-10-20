@@ -1,18 +1,23 @@
-# Ambiente de desenvolvimento local.
+# Stack completa. Desenvolvimento: `docker compose up --build`.
+# Produção: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` (ou scripts/deploy.sh).
 name: binance-trading-platform
 
 x-backend-common: &backend-common
   build:
     context: ./backend
+  image: btp-backend:latest
   env_file: .env
-  depends_on:
-    postgres:
-      condition: service_healthy
-    redis:
-      condition: service_healthy
   networks:
     - backend
   restart: unless-stopped
+
+x-after-migrate: &after-migrate
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+  migrate:
+    condition: service_completed_successfully
 
 services:
   caddy:
@@ -28,8 +33,10 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - frontend
-      - backend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     networks:
       - frontend
       - backend
@@ -39,33 +46,79 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api/v1}
-    environment:
-      NODE_ENV: production
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
+        BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
+    image: btp-frontend:latest
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     networks:
       - frontend
+      - backend
     restart: unless-stopped
+
+  # Executa as migrações Alembic uma única vez antes de API/workers subirem.
+  migrate:
+    <<: *backend-common
+    command: alembic upgrade head
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   backend:
     <<: *backend-common
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    depends_on: *after-migrate
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
       interval: 15s
       timeout: 5s
+      start_period: 20s
       retries: 5
 
   celery_worker:
     <<: *backend-common
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      DB_USE_NULLPOOL: "true"
     volumes:
       - ./backend:/app
+    depends_on: *after-migrate
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.tasks.celery_app inspect ping -d celery@$$HOSTNAME --timeout 5 | grep -q pong"]
+      interval: 30s
+      timeout: 15s
+      start_period: 30s
+      retries: 3
+
+  # Agendador: tick dos bots, reconciliação, snapshots de equity e reset diário (00:00 UTC).
+  # Mantenha exatamente UMA instância.
+  celery_beat:
+    <<: *backend-common
+    command: celery -A app.tasks.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
+    environment:
+      DB_USE_NULLPOOL: "true"
+    volumes:
+      - ./backend:/app
+    depends_on: *after-migrate
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat-schedule || test -f /tmp/celerybeat-schedule.db"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  # WebSockets da Binance (user data + mark price) e reconciliação por eventos. Mantenha UMA instância.
+  streams:
+    <<: *backend-common
+    command: python -m app.workers.streams
+    volumes:
+      - ./backend:/app
+    depends_on: *after-migrate
 
   postgres:
     image: postgres:15-alpine

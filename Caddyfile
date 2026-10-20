@@ -14,7 +14,7 @@
 		-Server
 	}
 
-	@api path /api/* /health /docs /openapi.json
+	@api path /api/* /health /docs /redoc /openapi.json
 	handle @api {
 		reverse_proxy backend:8000
 	}
