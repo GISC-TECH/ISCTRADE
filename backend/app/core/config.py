@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = True
     COOKIE_DOMAIN: str | None = None
 
+    ALLOW_REGISTRATION: bool = True
+    LOGIN_RATE_LIMIT_PER_MINUTE: int = 10
+    REGISTER_RATE_LIMIT_PER_MINUTE: int = 5
+
     # Encryption of exchange credentials (base64-encoded 32 bytes => AES-256)
     MASTER_ENCRYPTION_KEY: str = "CHANGE_ME"
 

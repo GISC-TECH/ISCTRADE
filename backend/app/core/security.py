@@ -59,8 +59,8 @@ def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> st
     return _create_token(subject, ACCESS_TOKEN_TYPE, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES), extra)
 
 
-def create_refresh_token(subject: str) -> str:
-    return _create_token(subject, REFRESH_TOKEN_TYPE, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+def create_refresh_token(subject: str, extra: dict[str, Any] | None = None) -> str:
+    return _create_token(subject, REFRESH_TOKEN_TYPE, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS), extra)
 
 
 def verify_token(token: str, expected_type: str = ACCESS_TOKEN_TYPE) -> dict[str, Any]:
