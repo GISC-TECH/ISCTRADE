@@ -1,4 +1,5 @@
 """Application settings loaded from environment variables (pydantic-settings)."""
+
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -16,6 +17,10 @@ class Settings(BaseSettings):
 
     # Database / cache
     DATABASE_URL: str = "postgresql+asyncpg://trading:CHANGE_ME@postgres:5432/trading"
+    DB_USE_NULLPOOL: bool = False
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 10
+    DB_ECHO: bool = False
     REDIS_URL: str = "redis://redis:6379/0"
 
     # Auth / JWT

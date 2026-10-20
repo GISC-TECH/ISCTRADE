@@ -3,6 +3,7 @@
 Generates a price grid between lower/upper bounds; every order produced here
 must be validated by RiskManager before reaching BinanceFuturesClient.
 """
+
 from dataclasses import dataclass
 from decimal import Decimal
 

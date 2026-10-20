@@ -1,4 +1,5 @@
 """Async wrapper around the Binance USDT-M Futures REST API (/fapi)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -36,9 +37,7 @@ class BinanceFuturesClient:
         self._api_key = api_key
         self._api_secret = api_secret.encode("utf-8")
         self.recv_window = recv_window or settings.BINANCE_RECV_WINDOW
-        self._client = httpx.AsyncClient(
-            base_url=self.base_url, timeout=timeout, headers={"X-MBX-APIKEY": api_key}
-        )
+        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout, headers={"X-MBX-APIKEY": api_key})
 
     async def __aenter__(self) -> "BinanceFuturesClient":
         return self
@@ -55,9 +54,7 @@ class BinanceFuturesClient:
         query = urlencode(params, doseq=True)
         return hmac.new(self._api_secret, query.encode("utf-8"), hashlib.sha256).hexdigest()
 
-    async def _request(
-        self, method: str, path: str, params: dict[str, Any] | None = None, signed: bool = False
-    ) -> Any:
+    async def _request(self, method: str, path: str, params: dict[str, Any] | None = None, signed: bool = False) -> Any:
         params = {k: v for k, v in (params or {}).items() if v is not None}
         if signed:
             params["timestamp"] = int(time.time() * 1000)
@@ -130,9 +127,7 @@ class BinanceFuturesClient:
         }
         return await self._request("POST", "/fapi/v1/order", params, signed=True)
 
-    async def cancel_order(
-        self, symbol: str, order_id: int | None = None, client_order_id: str | None = None
-    ) -> dict:
+    async def cancel_order(self, symbol: str, order_id: int | None = None, client_order_id: str | None = None) -> dict:
         if order_id is None and client_order_id is None:
             raise ValueError("order_id or client_order_id is required")
         return await self._request(

@@ -10,6 +10,7 @@ Rules (evaluated in this order):
 Reduce-only orders (closing/de-risking) are always allowed, so positions can be closed
 even when the kill switch is active.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ from enum import Enum
 
 
 class Side(str, Enum):
-    BUY = "BUY"    # long
+    BUY = "BUY"  # long
     SELL = "SELL"  # short
 
 
@@ -35,9 +36,9 @@ class OrderRequest:
 
 @dataclass(frozen=True)
 class AccountRiskState:
-    equity: Decimal                 # current equity (wallet + unrealized PnL), USDT
-    peak_equity: Decimal            # highest equity observed (for drawdown)
-    day_start_equity: Decimal       # equity at 00:00 UTC
+    equity: Decimal  # current equity (wallet + unrealized PnL), USDT
+    peak_equity: Decimal  # highest equity observed (for drawdown)
+    day_start_equity: Decimal  # equity at 00:00 UTC
     max_risk_per_trade_pct: Decimal = Decimal("1")
     max_leverage: int = 5
     max_daily_loss_pct: Decimal = Decimal("3")

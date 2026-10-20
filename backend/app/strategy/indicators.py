@@ -1,4 +1,5 @@
 """Basic technical indicators (pure Python, placeholder)."""
+
 from collections.abc import Sequence
 
 

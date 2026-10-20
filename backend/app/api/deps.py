@@ -1,4 +1,5 @@
 """Shared API dependencies: current user and active workspace (tenant isolation)."""
+
 import uuid
 
 from fastapi import Cookie, Depends, Header, HTTPException, status

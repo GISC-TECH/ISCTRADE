@@ -1,15 +1,42 @@
 """Async SQLAlchemy 2.0 engine and session factory."""
-from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
-engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True, echo=settings.DEBUG)
+
+def make_engine(url: str | None = None, *, nullpool: bool | None = None) -> AsyncEngine:
+    url = url or settings.DATABASE_URL
+    use_nullpool = settings.DB_USE_NULLPOOL if nullpool is None else nullpool
+    kwargs: dict = {"echo": settings.DB_ECHO}
+    if use_nullpool or url.startswith("sqlite"):
+        # NullPool: connections are never shared between event loops (Celery tasks, tests).
+        kwargs["poolclass"] = NullPool
+    else:
+        kwargs.update(pool_pre_ping=True, pool_size=settings.DB_POOL_SIZE, max_overflow=settings.DB_MAX_OVERFLOW)
+    return create_async_engine(url, **kwargs)
+
+
+engine = make_engine()
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+
+
+@asynccontextmanager
+async def session_scope() -> AsyncGenerator[AsyncSession, None]:
+    """Standalone session for background jobs (commit is explicit)."""
     async with AsyncSessionLocal() as session:
         try:
             yield session

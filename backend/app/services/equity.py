@@ -1,4 +1,5 @@
 """Equity tracking (placeholder): periodic snapshots used by charts, daily loss and drawdown rules."""
+
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal

@@ -1,4 +1,5 @@
 """Security helpers: password hashing, JWT, AES-256-GCM encryption and RBAC."""
+
 from __future__ import annotations
 
 import base64

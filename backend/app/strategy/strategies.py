@@ -1,4 +1,5 @@
 """Strategy registry (placeholder). No trading strategy is implemented yet."""
+
 from abc import ABC, abstractmethod
 from typing import Any
 

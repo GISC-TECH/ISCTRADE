@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.account import AccountStatus
+from app.models.enums import AccountStatus
 
 
 class AccountCreate(BaseModel):

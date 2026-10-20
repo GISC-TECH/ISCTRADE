@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_active_workspace, get_current_user
 from app.core.database import get_db
 from app.core.security import Role, encrypt_api_key, has_role
-from app.models.account import Account, AccountStatus
+from app.models.account import Account
+from app.models.enums import AccountStatus
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.schemas.account import AccountCreate, AccountDashboard, AccountRead
@@ -57,7 +58,9 @@ async def connect_account(
     db.add(account)
     await db.commit()
     await db.refresh(account)
-    await log_event("account.connected", user_id=user.id, workspace_id=workspace.id, account_id=account.id)
+    await log_event(
+        db, "account.connected", user_id=user.id, workspace_id=workspace.id, account_id=account.id, commit=True
+    )
     return account
 
 
@@ -87,7 +90,9 @@ async def start_account(
     await db.commit()
     await db.refresh(account)
     # TODO: disparar task Celery que inicia o bot (app.tasks.bot_tasks.start_bot).
-    await log_event("account.started", user_id=user.id, workspace_id=workspace.id, account_id=account.id)
+    await log_event(
+        db, "account.started", user_id=user.id, workspace_id=workspace.id, account_id=account.id, commit=True
+    )
     return account
 
 
@@ -103,5 +108,7 @@ async def stop_account(
     account.status = AccountStatus.STOPPED
     await db.commit()
     await db.refresh(account)
-    await log_event("account.stopped", user_id=user.id, workspace_id=workspace.id, account_id=account.id)
+    await log_event(
+        db, "account.stopped", user_id=user.id, workspace_id=workspace.id, account_id=account.id, commit=True
+    )
     return account
