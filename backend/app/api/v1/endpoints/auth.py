@@ -35,7 +35,7 @@ async def login(data: UserLogin, response: Response, db: AsyncSession = Depends(
     if not user or not verify_password(data.password, user.hashed_password) or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
 
-    access = create_access_token(str(user.id), {"role": user.role.value})
+    access = create_access_token(str(user.id), {"role": user.role.value, "ver": user.token_version})
     refresh = create_refresh_token(str(user.id))
     common = dict(httponly=True, secure=settings.COOKIE_SECURE, samesite="lax", domain=settings.COOKIE_DOMAIN)
     response.set_cookie(ACCESS_COOKIE_NAME, access, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, **common)

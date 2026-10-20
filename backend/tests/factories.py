@@ -47,7 +47,7 @@ async def make_bot(db, acc: Account, strategy_key: str, params: dict, **kw) -> B
         name=kw.pop("name", strategy_key),
         strategy_key=strategy_key,
         symbol=kw.pop("symbol", "BTCUSDT"),
-        interval="1h",
+        interval=kw.pop("interval", "1h"),
         params=params,
         state=kw.pop("state", BotState.RUNNING),
         **kw,

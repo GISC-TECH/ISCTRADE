@@ -18,6 +18,7 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ["COOKIE_SECURE"] = "false"
 os.environ["REDIS_URL"] = "redis://127.0.0.1:1/0"  # unreachable on purpose -> in-memory fallbacks
 os.environ["LIVE_TRADING_ENABLED"] = "false"
+os.environ["CELERY_DISPATCH_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402

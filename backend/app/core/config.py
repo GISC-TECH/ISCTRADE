@@ -1,9 +1,10 @@
 """Application settings loaded from environment variables (pydantic-settings)."""
 
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -43,11 +44,12 @@ class Settings(BaseSettings):
     BINANCE_RECV_WINDOW: int = 5000
 
     # CORS (comma-separated list)
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 
     # Celery
     CELERY_BROKER_URL: str = "redis://redis:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
+    CELERY_DISPATCH_ENABLED: bool = True  # API -> worker task dispatch (disabled in tests)
 
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = 60
@@ -70,7 +72,12 @@ class Settings(BaseSettings):
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
-        if isinstance(v, str) and not v.strip().startswith("["):
+        if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("["):
+                import json
+
+                return json.loads(v)
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
