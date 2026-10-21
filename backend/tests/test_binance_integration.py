@@ -112,7 +112,7 @@ async def test_market_stream_reconnects() -> None:
     async def server_handler(ws):
         nonlocal connections
         connections += 1
-        assert "streams=btcusdt@markprice@1s" in ws.request.path
+        assert "streams=btcusdt@markPrice@1s" in ws.request.path  # symbol lowercased, stream type kept
         await ws.send(
             json.dumps({"stream": "x", "data": {"e": "markPriceUpdate", "s": "BTCUSDT", "p": str(connections)}})
         )
@@ -136,6 +136,44 @@ async def test_market_stream_reconnects() -> None:
         await asyncio.wait_for(stream.run(), timeout=10)
     assert [m["p"] for m in received] == ["1", "2"]
     assert stream.connections == 2
+
+
+async def test_market_stream_keeps_case_sensitive_stream_types() -> None:
+    async def noop(_msg):
+        return None
+
+    stream = MarketStream(
+        ["!miniTicker@arr", "!markPrice@arr@1s", "BTCUSDT@markPrice@1s", "ETHUSDT@kline_1M"], noop, base_url="ws://x"
+    )
+    url = await stream.url()
+    # Binance silently delivers nothing for "!miniticker@arr" / "btcusdt@markprice@1s"; "1M" (month) != "1m"
+    assert url == "ws://x/stream?streams=!miniTicker@arr/!markPrice@arr@1s/btcusdt@markPrice@1s/ethusdt@kline_1M"
+
+
+async def test_market_stream_reconnects_when_silent() -> None:
+    connections = 0
+
+    async def server_handler(ws):
+        nonlocal connections
+        connections += 1
+        if connections == 1:
+            await ws.wait_closed()  # half-open: connected but never sends anything
+        else:
+            await ws.send(json.dumps({"stream": "x", "data": {"e": "markPriceUpdate", "s": "BTCUSDT", "p": "1"}}))
+            await ws.wait_closed()
+
+    received: list[dict] = []
+    async with serve(server_handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+
+        async def handler(msg):
+            received.append(msg)
+            stream.stop()
+
+        stream = MarketStream(["!markPrice@arr@1s"], handler, base_url=f"ws://127.0.0.1:{port}", initial_backoff=0.05)
+        stream.idle_timeout = 1.5
+        await asyncio.wait_for(stream.run(), timeout=10)
+    assert connections == 2 and received[0]["p"] == "1"
 
 
 async def test_user_data_stream_renews_listen_key_on_expiry() -> None:

@@ -117,6 +117,8 @@ class BinanceStream:
         except Exception:
             logger.exception("ws %s hook failed", self.name)
 
+    idle_timeout: float | None = None  # seconds without any message before forcing a reconnect
+
     async def url(self) -> str:  # pragma: no cover - abstract
         raise NotImplementedError
 
@@ -148,7 +150,7 @@ class BinanceStream:
                     self.connections += 1
                     backoff = self.initial_backoff
                     await self._mark_connected()
-                    opened = time.monotonic()
+                    opened = last_msg = time.monotonic()
                     logger.info("ws %s connected (%d)", self.name, self.connections)
                     await self.on_open(ws)
                     while not self._stop.is_set():
@@ -159,7 +161,11 @@ class BinanceStream:
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=min(remaining, 1.0))
                         except TimeoutError:
+                            if self.idle_timeout and time.monotonic() - last_msg > self.idle_timeout:
+                                logger.warning("ws %s silent for %.0fs; reconnecting", self.name, self.idle_timeout)
+                                break
                             continue
+                        last_msg = time.monotonic()
                         self.messages += 1
                         msg = json.loads(raw)
                         if await self._dispatch(msg) is False:
@@ -184,6 +190,10 @@ class BinanceStream:
 class MarketStream(BinanceStream):
     """Combined stream, e.g. streams=["btcusdt@kline_1m", "btcusdt@markPrice@1s"]."""
 
+    # Public market streams push data every second; a silent socket is a half-open connection
+    # (observed behind proxies) that keepalive pings did not tear down, so reconnect.
+    idle_timeout: float | None = 60.0
+
     def __init__(
         self, streams: list[str], handler: Handler, *, testnet: bool = True, base_url: str | None = None, **kw
     ):
@@ -191,8 +201,17 @@ class MarketStream(BinanceStream):
         self.streams = streams
         self.base_url = base_url or ws_base_url(testnet)
 
+    @staticmethod
+    def _stream_name(stream: str) -> str:
+        # Only the symbol is case-insensitive (lowercase); stream types such as "!miniTicker@arr" or
+        # "markPrice@1s" are case-sensitive and silently deliver nothing when lowercased.
+        if stream.startswith("!"):
+            return stream
+        symbol, sep, rest = stream.partition("@")
+        return f"{symbol.lower()}{sep}{rest}"
+
     async def url(self) -> str:
-        return f"{self.base_url}/stream?streams={'/'.join(s.lower() for s in self.streams)}"
+        return f"{self.base_url}/stream?streams={'/'.join(self._stream_name(s) for s in self.streams)}"
 
     async def _dispatch(self, msg: dict[str, Any]) -> bool | None:
         await self.handler(msg.get("data", msg))
