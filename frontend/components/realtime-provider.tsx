@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { cn } from "@/lib/utils";
@@ -8,9 +8,11 @@ import {
   RealtimeClient,
   type ConnectionStatus,
   type KlineMsg,
+  type Mark,
   type Net,
   type RealtimeMessage,
   type RealtimeSnapshot,
+  type Ticker,
 } from "@/lib/realtime";
 
 const RealtimeContext = createContext<RealtimeClient | null>(null);
@@ -60,6 +62,57 @@ export function useRealtime(): RealtimeSnapshot {
     client?.getSnapshot ?? (() => EMPTY),
     () => EMPTY
   );
+}
+
+/**
+ * Subscribe to one slice of the snapshot. The component re-renders only when `select` returns a
+ * different value (Object.is), so return primitives or objects whose identity is stable — e.g.
+ * `tickers[symbol]` changes identity only when that symbol is updated. Prefer this (or the helpers
+ * below) over `useRealtime()`, which re-renders on every ticker/mark message (up to ~8x/s).
+ */
+export function useRealtimeSelector<T>(select: (snap: RealtimeSnapshot) => T): T {
+  const client = useRealtimeClient();
+  const ref = useRef(select);
+  ref.current = select;
+  const getSnapshot = useCallback(() => ref.current(client ? client.getSnapshot() : EMPTY), [client]);
+  const getServerSnapshot = useCallback(() => ref.current(EMPTY), []);
+  return useSyncExternalStore(client?.subscribe ?? noopSubscribe, getSnapshot, getServerSnapshot);
+}
+
+export function useTicker(symbol: string): Ticker | undefined {
+  return useRealtimeSelector((s) => s.tickers[symbol]);
+}
+
+export function useMark(symbol: string): Mark | undefined {
+  return useRealtimeSelector((s) => s.marks[symbol]);
+}
+
+export function useRealtimeNet(): Net {
+  return useRealtimeSelector((s) => s.net);
+}
+
+/** Live price (mark, else last trade) for one symbol; re-renders only when that price changes. */
+export function useLivePrice(symbol: string): number | null {
+  return useRealtimeSelector((s) => s.marks[symbol]?.p ?? s.tickers[symbol]?.c ?? null);
+}
+
+/**
+ * Live prices for several symbols. The selector returns a string key, so the component re-renders
+ * only when one of *these* prices changes, not on every message for other symbols.
+ */
+export function useLivePrices(symbols: string[]): Record<string, number | null> {
+  const key = useRealtimeSelector((s) =>
+    symbols.map((sym) => `${sym}=${s.marks[sym]?.p ?? s.tickers[sym]?.c ?? ""}`).join("|")
+  );
+  return useMemo(() => {
+    const out: Record<string, number | null> = {};
+    if (!key) return out;
+    for (const part of key.split("|")) {
+      const [sym, v] = part.split("=");
+      out[sym] = v === "" ? null : Number(v);
+    }
+    return out;
+  }, [key]);
 }
 
 /** Subscribe to tickers/mark prices of `symbols` while the component is mounted. */
@@ -122,7 +175,10 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
 };
 
 export function ConnectionIndicator({ className }: { className?: string }) {
-  const { status, attempts, broker } = useRealtime();
+  // three primitive selectors: price messages do not re-render the indicator
+  const status = useRealtimeSelector((s) => s.status);
+  const attempts = useRealtimeSelector((s) => s.attempts);
+  const broker = useRealtimeSelector((s) => s.broker);
   const client = useRealtimeClient();
   const color =
     status === "open"

@@ -1,11 +1,20 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
-import { CandleChart, type ChartLine, type ChartTrade } from "@/components/candle-chart";
+import type { ChartLine, ChartTrade } from "@/components/candle-chart";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/common";
-import { useNet, useRealtime, useRealtimeEvent, useWatchSymbols } from "@/components/realtime-provider";
+import {
+  useLivePrice,
+  useLivePrices,
+  useMark,
+  useNet,
+  useRealtimeEvent,
+  useTicker,
+  useWatchSymbols,
+} from "@/components/realtime-provider";
 import { formatPrice } from "@/components/ticker-bar";
 import { TradingPanel } from "@/components/trading-panel";
 import { Alert } from "@/components/ui/alert";
@@ -27,6 +36,12 @@ import { api, errorMessage } from "@/lib/api";
 import { dateTime, num, pnlClass, qty, usd } from "@/lib/format";
 import type { RealtimeMessage } from "@/lib/realtime";
 import type { Account, AccountDashboard, Bot, Order, PositionOut, Trade } from "@/lib/types";
+
+// lightweight-charts (~45 kB gz) loads in its own chunk, after the page shell.
+const CandleChart = dynamic(() => import("@/components/candle-chart").then((m) => m.CandleChart), {
+  ssr: false,
+  loading: () => <div className="h-[420px] w-full" />,
+});
 
 const INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d"];
 const OPEN_STATUSES = new Set(["NEW", "PARTIALLY_FILLED", "PENDING"]);
@@ -61,6 +76,207 @@ function describe(msg: RealtimeMessage): string | null {
   }
 }
 
+type LivePosition = PositionOut & { mark: number; pnl: number; roe: number };
+
+function withLivePnl(positions: PositionOut[], prices: Record<string, number | null>): LivePosition[] {
+  return positions.map((p) => {
+    const mark = prices[p.symbol] ?? num(p.mark_price ?? p.entry_price);
+    const q = num(p.quantity);
+    const pnl = q * (mark - num(p.entry_price));
+    const notional = Math.abs(q) * num(p.entry_price);
+    const roe = notional > 0 ? (pnl / (notional / Math.max(p.leverage, 1))) * 100 : 0;
+    return { ...p, mark, pnl, roe };
+  });
+}
+
+/**
+ * Live P&L of the open positions. Only the components that call this re-render on price
+ * messages (and only when one of these symbols' price changes); the chart, order/event
+ * tables and the rest of the page stay put.
+ */
+function useLivePositions(positions: PositionOut[]): { live: LivePosition[]; totalUpnl: number } {
+  const prices = useLivePrices(positions.map((p) => p.symbol));
+  return useMemo(() => {
+    const live = withLivePnl(positions, prices);
+    return { live, totalUpnl: live.reduce((acc, p) => acc + p.pnl, 0) };
+  }, [positions, prices]);
+}
+
+function LiveQuote({ symbol }: { symbol: string }) {
+  const ticker = useTicker(symbol);
+  const mark = useMark(symbol);
+  return (
+    <div className="ml-auto text-right text-sm tabular-nums">
+      <div className="font-semibold">{formatPrice(ticker?.c ?? null)}</div>
+      <div className="text-xs text-muted-foreground">
+        mark {formatPrice(mark?.p ?? null)} · funding{" "}
+        {mark?.r != null ? `${(mark.r * 100).toFixed(4)}%` : "—"}
+      </div>
+    </div>
+  );
+}
+
+function PositionsCard({
+  positions,
+  canTrade,
+  onSelect,
+  onClose,
+  onCloseAll,
+}: {
+  positions: PositionOut[];
+  canTrade: boolean;
+  onSelect: (symbol: string) => void;
+  onClose: (symbol: string) => void;
+  onCloseAll: () => void;
+}) {
+  const { live: livePositions, totalUpnl } = useLivePositions(positions);
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-base">
+          Posições · PnL não realizado <span className={pnlClass(totalUpnl)}>{usd(totalUpnl)}</span>
+        </CardTitle>
+        {canTrade && livePositions.length > 0 && (
+          <Button size="sm" variant="destructive" onClick={onCloseAll}>
+            Fechar todas
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent>
+        {livePositions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sem posições abertas.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Símbolo</TableHead>
+                <TableHead>Qtd.</TableHead>
+                <TableHead>Entrada</TableHead>
+                <TableHead>Mark</TableHead>
+                <TableHead>SL / TP</TableHead>
+                <TableHead>PnL</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {livePositions.map((p) => (
+                <TableRow key={p.symbol} className="cursor-pointer" onClick={() => onSelect(p.symbol)}>
+                  <TableCell>
+                    {p.symbol}{" "}
+                    <Badge variant={num(p.quantity) > 0 ? "success" : "destructive"}>
+                      {num(p.quantity) > 0 ? "LONG" : "SHORT"} {p.leverage}x
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="tabular-nums">{qty(Math.abs(num(p.quantity)))}</TableCell>
+                  <TableCell className="tabular-nums">{formatPrice(num(p.entry_price))}</TableCell>
+                  <TableCell className="tabular-nums">{formatPrice(p.mark)}</TableCell>
+                  <TableCell className="tabular-nums text-xs">
+                    {p.stop_loss ? formatPrice(num(p.stop_loss)) : "—"} /{" "}
+                    {p.take_profit ? formatPrice(num(p.take_profit)) : "—"}
+                  </TableCell>
+                  <TableCell className={`tabular-nums ${pnlClass(p.pnl)}`}>
+                    {usd(p.pnl)} ({p.roe.toFixed(2)}%)
+                  </TableCell>
+                  <TableCell>
+                    {canTrade && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onClose(p.symbol);
+                        }}
+                      >
+                        Fechar
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function AccountCard({
+  account,
+  dash,
+  positions,
+}: {
+  account: Account;
+  dash: AccountDashboard | null;
+  positions: PositionOut[];
+}) {
+  const { totalUpnl } = useLivePositions(positions);
+  const equity = dash ? num(dash.wallet_balance) + totalUpnl : 0;
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center justify-between text-base">
+          Conta <StatusBadge status={account.status} />
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1 text-sm">
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Patrimônio (ao vivo)</span>
+          <span className="tabular-nums">{usd(equity)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Saldo</span>
+          <span className="tabular-nums">{usd(dash?.wallet_balance)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">PnL realizado hoje</span>
+          <span className={`tabular-nums ${pnlClass(dash?.realized_pnl_today)}`}>{usd(dash?.realized_pnl_today)}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ManualOrderCard({
+  account,
+  symbol,
+  dash,
+  positions,
+  globalKill,
+  canTrade,
+  onDone,
+}: {
+  account: Account;
+  symbol: string;
+  dash: AccountDashboard | null;
+  positions: PositionOut[];
+  globalKill: boolean;
+  canTrade: boolean;
+  onDone: () => void;
+}) {
+  const marketPrice = useLivePrice(symbol);
+  const { totalUpnl } = useLivePositions(positions);
+  const equity = dash ? num(dash.wallet_balance) + totalUpnl : 0;
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Ordem manual</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <TradingPanel
+          account={account}
+          symbol={symbol}
+          marketPrice={marketPrice}
+          equity={equity}
+          globalKill={globalKill}
+          canTrade={canTrade}
+          onDone={onDone}
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function LivePage() {
   const { workspace } = useAuth();
   const canTrade = workspace?.role === "admin" || workspace?.role === "trader";
@@ -81,7 +297,6 @@ export default function LivePage() {
   const [busy, setBusy] = useState(false);
 
   const account = accounts.find((a) => a.id === accountId) ?? null;
-  const { marks, tickers } = useRealtime();
   useNet(account ? (account.is_testnet ? "test" : "main") : null);
 
   useEffect(() => {
@@ -148,36 +363,34 @@ export default function LivePage() {
   const watched = useMemo(() => Array.from(new Set([symbol, ...positions.map((p) => p.symbol)])), [symbol, positions]);
   useWatchSymbols(watched);
 
-  const livePrice = (s: string): number | null => marks[s]?.p ?? tickers[s]?.c ?? null;
-  const livePositions = positions.map((p) => {
-    const mark = livePrice(p.symbol) ?? num(p.mark_price ?? p.entry_price);
-    const q = num(p.quantity);
-    const pnl = q * (mark - num(p.entry_price));
-    const notional = Math.abs(q) * num(p.entry_price);
-    const roe = notional > 0 ? (pnl / (notional / Math.max(p.leverage, 1))) * 100 : 0;
-    return { ...p, mark, pnl, roe };
-  });
-  const totalUpnl = livePositions.reduce((acc, p) => acc + p.pnl, 0);
-  const equity = dash ? num(dash.wallet_balance) + totalUpnl : 0;
-
-  const current = livePositions.find((p) => p.symbol === symbol);
-  const lines: ChartLine[] = [];
-  if (current) {
-    lines.push({ price: num(current.entry_price), title: "Entrada", color: "#94a3b8" });
-    if (current.stop_loss) lines.push({ price: num(current.stop_loss), title: "SL", color: "#ef4444", dashed: true });
-    if (current.take_profit)
-      lines.push({ price: num(current.take_profit), title: "TP", color: "#22c55e", dashed: true });
-  }
-  orders
-    .filter((o) => o.symbol === symbol && OPEN_STATUSES.has(o.status) && o.price)
-    .forEach((o) => lines.push({ price: num(o.price), title: `LIMIT ${o.side}`, color: "#3b82f6", dashed: true }));
-  const chartTrades: ChartTrade[] = trades.map((t) => ({
-    time: t.executed_at,
-    side: t.side,
-    price: num(t.price),
-    quantity: num(t.quantity),
-    realized_pnl: num(t.realized_pnl),
-  }));
+  // Derived from REST state only (entry/SL/TP/limit prices do not move with the market), memoized so
+  // the chart does not redo markers or price lines unless trades/positions/orders actually change.
+  const lines = useMemo(() => {
+    const out: ChartLine[] = [];
+    const current = positions.find((p) => p.symbol === symbol);
+    if (current) {
+      out.push({ price: num(current.entry_price), title: "Entrada", color: "#94a3b8" });
+      if (current.stop_loss) out.push({ price: num(current.stop_loss), title: "SL", color: "#ef4444", dashed: true });
+      if (current.take_profit)
+        out.push({ price: num(current.take_profit), title: "TP", color: "#22c55e", dashed: true });
+    }
+    orders
+      .filter((o) => o.symbol === symbol && OPEN_STATUSES.has(o.status) && o.price)
+      .forEach((o) => out.push({ price: num(o.price), title: `LIMIT ${o.side}`, color: "#3b82f6", dashed: true }));
+    return out;
+  }, [positions, orders, symbol]);
+  const chartTrades = useMemo<ChartTrade[]>(
+    () =>
+      trades.map((t) => ({
+        time: t.executed_at,
+        side: t.side,
+        price: num(t.price),
+        quantity: num(t.quantity),
+        realized_pnl: num(t.realized_pnl),
+      })),
+    [trades]
+  );
+  const onDone = useCallback(() => void load(), [load]);
 
   const doClose = async () => {
     if (!closing || !account) return;
@@ -277,13 +490,7 @@ export default function LivePage() {
                   </Button>
                 ))}
               </div>
-              <div className="ml-auto text-right text-sm tabular-nums">
-                <div className="font-semibold">{formatPrice(tickers[symbol]?.c ?? null)}</div>
-                <div className="text-xs text-muted-foreground">
-                  mark {formatPrice(marks[symbol]?.p ?? null)} · funding{" "}
-                  {marks[symbol]?.r != null ? `${((marks[symbol]?.r ?? 0) * 100).toFixed(4)}%` : "—"}
-                </div>
-              </div>
+              <LiveQuote symbol={symbol} />
             </CardHeader>
             <CardContent>
               <CandleChart
@@ -296,73 +503,13 @@ export default function LivePage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-base">
-                Posições · PnL não realizado <span className={pnlClass(totalUpnl)}>{usd(totalUpnl)}</span>
-              </CardTitle>
-              {canTrade && livePositions.length > 0 && (
-                <Button size="sm" variant="destructive" onClick={() => setClosing({ kind: "all" })}>
-                  Fechar todas
-                </Button>
-              )}
-            </CardHeader>
-            <CardContent>
-              {livePositions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Sem posições abertas.</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Símbolo</TableHead>
-                      <TableHead>Qtd.</TableHead>
-                      <TableHead>Entrada</TableHead>
-                      <TableHead>Mark</TableHead>
-                      <TableHead>SL / TP</TableHead>
-                      <TableHead>PnL</TableHead>
-                      <TableHead />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {livePositions.map((p) => (
-                      <TableRow key={p.symbol} className="cursor-pointer" onClick={() => setSymbol(p.symbol)}>
-                        <TableCell>
-                          {p.symbol}{" "}
-                          <Badge variant={num(p.quantity) > 0 ? "success" : "destructive"}>
-                            {num(p.quantity) > 0 ? "LONG" : "SHORT"} {p.leverage}x
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="tabular-nums">{qty(Math.abs(num(p.quantity)))}</TableCell>
-                        <TableCell className="tabular-nums">{formatPrice(num(p.entry_price))}</TableCell>
-                        <TableCell className="tabular-nums">{formatPrice(p.mark)}</TableCell>
-                        <TableCell className="tabular-nums text-xs">
-                          {p.stop_loss ? formatPrice(num(p.stop_loss)) : "—"} /{" "}
-                          {p.take_profit ? formatPrice(num(p.take_profit)) : "—"}
-                        </TableCell>
-                        <TableCell className={`tabular-nums ${pnlClass(p.pnl)}`}>
-                          {usd(p.pnl)} ({p.roe.toFixed(2)}%)
-                        </TableCell>
-                        <TableCell>
-                          {canTrade && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setClosing({ kind: "one", symbol: p.symbol });
-                              }}
-                            >
-                              Fechar
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
+          <PositionsCard
+            positions={positions}
+            canTrade={canTrade}
+            onSelect={setSymbol}
+            onClose={(sym) => setClosing({ kind: "one", symbol: sym })}
+            onCloseAll={() => setClosing({ kind: "all" })}
+          />
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
@@ -430,48 +577,17 @@ export default function LivePage() {
         </div>
 
         <div className="space-y-4">
+          {account && <AccountCard account={account} dash={dash} positions={positions} />}
           {account && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center justify-between text-base">
-                  Conta <StatusBadge status={account.status} />
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Patrimônio (ao vivo)</span>
-                  <span className="tabular-nums">{usd(equity)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Saldo</span>
-                  <span className="tabular-nums">{usd(dash?.wallet_balance)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">PnL realizado hoje</span>
-                  <span className={`tabular-nums ${pnlClass(dash?.realized_pnl_today)}`}>
-                    {usd(dash?.realized_pnl_today)}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-          {account && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Ordem manual</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <TradingPanel
-                  account={account}
-                  symbol={symbol}
-                  marketPrice={livePrice(symbol)}
-                  equity={equity}
-                  globalKill={globalKill}
-                  canTrade={canTrade}
-                  onDone={() => void load()}
-                />
-              </CardContent>
-            </Card>
+            <ManualOrderCard
+              account={account}
+              symbol={symbol}
+              dash={dash}
+              positions={positions}
+              globalKill={globalKill}
+              canTrade={canTrade}
+              onDone={onDone}
+            />
           )}
           <Card>
             <CardHeader className="pb-2">

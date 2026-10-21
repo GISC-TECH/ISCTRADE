@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { ConnectionIndicator, useRealtime, useWatchSymbols } from "@/components/realtime-provider";
+import { ConnectionIndicator, useRealtimeNet, useTicker, useWatchSymbols } from "@/components/realtime-provider";
 import { cn } from "@/lib/utils";
 
 const WATCHLIST_KEY = "btp.watchlist";
@@ -25,11 +25,26 @@ function loadWatchlist(): string[] {
   return DEFAULT_WATCHLIST;
 }
 
+/** One quote; subscribes to its own symbol so a message re-renders only the symbols it changed. */
+function TickerItem({ symbol }: { symbol: string }) {
+  const t = useTicker(symbol);
+  const change = t?.P ?? null;
+  return (
+    <div className="flex shrink-0 items-baseline gap-1.5 tabular-nums">
+      <span className="font-medium">{symbol.replace(/USDT$/, "")}</span>
+      <span>{formatPrice(t?.c)}</span>
+      <span className={cn(change === null ? "" : change >= 0 ? "text-green-500" : "text-red-500")}>
+        {change === null ? "" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`}
+      </span>
+    </div>
+  );
+}
+
 export function TickerBar() {
   const [symbols, setSymbols] = useState<string[]>(DEFAULT_WATCHLIST);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const { tickers, net } = useRealtime();
+  const net = useRealtimeNet();
   useWatchSymbols(symbols);
 
   useEffect(() => setSymbols(loadWatchlist()), []);
@@ -76,19 +91,9 @@ export function TickerBar() {
       ) : (
         <>
           <div className="flex flex-1 gap-4">
-            {symbols.map((s) => {
-              const t = tickers[s];
-              const change = t?.P ?? null;
-              return (
-                <div key={s} className="flex shrink-0 items-baseline gap-1.5 tabular-nums">
-                  <span className="font-medium">{s.replace(/USDT$/, "")}</span>
-                  <span>{formatPrice(t?.c)}</span>
-                  <span className={cn(change === null ? "" : change >= 0 ? "text-green-500" : "text-red-500")}>
-                    {change === null ? "" : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`}
-                  </span>
-                </div>
-              );
-            })}
+            {symbols.map((s) => (
+              <TickerItem key={s} symbol={s} />
+            ))}
           </div>
           <button
             type="button"
