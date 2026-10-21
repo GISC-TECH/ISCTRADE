@@ -128,6 +128,103 @@ def macd(values: Sequence[float], fast: int = 12, slow: int = 26, signal: int = 
     return line, sig, hist
 
 
+def highest(values: Sequence[float], period: int) -> Series:
+    """Rolling max over `period` values ending at each index (inclusive)."""
+    _check_period(period)
+    return [None if i + 1 < period else max(values[i + 1 - period : i + 1]) for i in range(len(values))]
+
+
+def lowest(values: Sequence[float], period: int) -> Series:
+    _check_period(period)
+    return [None if i + 1 < period else min(values[i + 1 - period : i + 1]) for i in range(len(values))]
+
+
+def donchian(highs: Sequence[float], lows: Sequence[float], period: int = 20) -> tuple[Series, Series, Series]:
+    """Donchian channel -> (upper, middle, lower)."""
+    up, lo = highest(highs, period), lowest(lows, period)
+    mid: Series = [None if a is None or b is None else (a + b) / 2 for a, b in zip(up, lo)]
+    return up, mid, lo
+
+
+def _wilder(values: Sequence[float], period: int) -> Series:
+    out: Series = [None] * len(values)
+    if len(values) < period:
+        return out
+    prev = sum(values[:period]) / period
+    out[period - 1] = prev
+    for i in range(period, len(values)):
+        prev = (prev * (period - 1) + values[i]) / period
+        out[i] = prev
+    return out
+
+
+def adx(
+    highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], period: int = 14
+) -> tuple[Series, Series, Series]:
+    """Wilder's ADX -> (adx, +DI, -DI). Values are None during warm-up (about 2*period candles)."""
+    _check_period(period)
+    n = len(closes)
+    none: Series = [None] * n
+    if n < period + 1:
+        return none, list(none), list(none)
+    plus_dm, minus_dm = [0.0], [0.0]
+    for i in range(1, n):
+        up, down = highs[i] - highs[i - 1], lows[i - 1] - lows[i]
+        plus_dm.append(up if up > down and up > 0 else 0.0)
+        minus_dm.append(down if down > up and down > 0 else 0.0)
+    tr = true_range(highs, lows, closes)
+    # Wilder smoothing starting at index 1 (index 0 has no previous candle)
+    atr_s, pdm_s, mdm_s = _wilder(tr[1:], period), _wilder(plus_dm[1:], period), _wilder(minus_dm[1:], period)
+    pdi: Series = [None]
+    mdi: Series = [None]
+    dx: list[float | None] = [None]
+    for a, p, m in zip(atr_s, pdm_s, mdm_s):
+        if a is None or p is None or m is None or a == 0:
+            pdi.append(None)
+            mdi.append(None)
+            dx.append(None)
+            continue
+        pv, mv = 100 * p / a, 100 * m / a
+        pdi.append(pv)
+        mdi.append(mv)
+        dx.append(0.0 if pv + mv == 0 else 100 * abs(pv - mv) / (pv + mv))
+    first = next((i for i, v in enumerate(dx) if v is not None), None)
+    out: Series = [None] * n
+    if first is not None:
+        tail = _wilder([v for v in dx[first:] if v is not None], period)
+        out[first:] = tail
+    return out, pdi, mdi
+
+
+def supertrend(
+    highs: Sequence[float], lows: Sequence[float], closes: Sequence[float], period: int = 10, multiplier: float = 3.0
+) -> tuple[Series, list[int]]:
+    """Supertrend -> (line, direction) with direction 1 (up/bullish), -1 (down) or 0 (warm-up)."""
+    a = atr(highs, lows, closes, period)
+    n = len(closes)
+    line: Series = [None] * n
+    direction = [0] * n
+    fu = fl = None  # final upper / lower bands
+    for i in range(n):
+        if a[i] is None:
+            continue
+        hl2 = (highs[i] + lows[i]) / 2
+        bu, bl = hl2 + multiplier * a[i], hl2 - multiplier * a[i]  # type: ignore[operator]
+        prev_close = closes[i - 1] if i > 0 else closes[i]
+        fu = bu if fu is None or bu < fu or prev_close > fu else fu
+        fl = bl if fl is None or bl > fl or prev_close < fl else fl
+        prev_dir = direction[i - 1] if i > 0 else 0
+        if prev_dir == 0:
+            d = 1 if closes[i] >= hl2 else -1
+        elif prev_dir == 1:
+            d = -1 if closes[i] < fl else 1
+        else:
+            d = 1 if closes[i] > fu else -1
+        direction[i] = d
+        line[i] = fl if d == 1 else fu
+    return line, direction
+
+
 def crossed_above(fast: Series, slow: Series, i: int = -1) -> bool:
     """True if `fast` crossed above `slow` at index i (compared to i-1)."""
     a0, b0, a1, b1 = fast[i - 1], slow[i - 1], fast[i], slow[i]
