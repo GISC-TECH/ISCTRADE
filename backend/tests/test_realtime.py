@@ -392,3 +392,25 @@ async def test_after_commit_events_keep_commit_order_on_one_thread(db) -> None:
         assert len(publishers) == 1 and "realtime-publish" in before | {publishers[0].name}
     finally:
         realtime.memory_broker.unsubscribe(q)
+
+
+async def test_streams_mark_prices_are_buffered_and_flushed_in_one_pipeline(monkeypatch) -> None:
+    from app.workers import streams
+
+    calls: list[tuple[dict, bool]] = []
+
+    async def fake_cache_prices(values, testnet):
+        calls.append((values, testnet))
+
+    monkeypatch.setattr(streams, "cache_prices", fake_cache_prices)
+    sup = streams.StreamSupervisor()
+    handle = sup._price_handler(False)
+    for i in range(50):
+        await handle({"e": "markPriceUpdate", "s": "BTCUSDT", "p": str(100 + i)})
+        await handle({"e": "markPriceUpdate", "s": "ETHUSDT", "p": str(10 + i)})
+    await handle({"e": "other"})
+    assert calls == []  # nothing awaited per message
+    await sup.flush_prices()
+    assert calls == [({"BTCUSDT": "149", "ETHUSDT": "59"}, False)]  # latest value per symbol, one write
+    await sup.flush_prices()
+    assert len(calls) == 1

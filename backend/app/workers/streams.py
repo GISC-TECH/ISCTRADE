@@ -27,7 +27,7 @@ from app.models import Account, AccountStatus, BotConfig, ExecutionMode
 from app.services import realtime
 from app.services.accounts import client_for_account
 from app.services.health import write_streams_heartbeat
-from app.services.prices import cache_price
+from app.services.prices import cache_prices
 from app.services.reconciler import Reconciler
 from app.strategy.state_machine import ACTIVE_STATES
 from app.workers.market_feed import MarketFeed
@@ -36,6 +36,7 @@ logger = logging.getLogger("streams")
 REFRESH_SECONDS = 60
 HEARTBEAT_SECONDS = 15
 FEED_SYNC_SECONDS = 5
+PRICE_FLUSH_SECONDS = 0.5  # mark prices are buffered and written to Redis in one pipeline per flush
 
 
 def user_event_summary(event: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
@@ -65,12 +66,14 @@ class StreamSupervisor:
         self.market: dict[bool, tuple[ExchangeStream, asyncio.Task, frozenset[str]]] = {}
         self.feeds: list[MarketFeed] = []
         self._stop = asyncio.Event()
+        self._prices: dict[bool, dict[str, str]] = {True: {}, False: {}}
 
     def stop(self) -> None:
         self._stop.set()
 
     async def run(self) -> None:
         heartbeat = asyncio.create_task(self._heartbeat())
+        price_flusher = asyncio.create_task(self._price_flush_loop())
         feeds = (
             asyncio.create_task(self._feed_loop())
             if settings.REALTIME_ENABLED and settings.REALTIME_MARKET_FEED
@@ -86,6 +89,8 @@ class StreamSupervisor:
             except TimeoutError:
                 pass
         heartbeat.cancel()
+        price_flusher.cancel()
+        await self.flush_prices()
         if feeds is not None:
             feeds.cancel()
         await self.shutdown()
@@ -165,11 +170,32 @@ class StreamSupervisor:
                 self.market[testnet] = (stream, asyncio.create_task(stream.run()), key)
 
     def _price_handler(self, testnet: bool):
+        """Buffer the latest mark per symbol: the WS reader never waits for a Redis round trip per message."""
+        buffer = self._prices[testnet]
+
         async def handle(data: dict[str, Any]) -> None:
             if data.get("e") == "markPriceUpdate":
-                await cache_price(data["s"], data["p"], testnet)
+                buffer[data["s"]] = data["p"]
 
         return handle
+
+    async def flush_prices(self) -> None:
+        for testnet, buffer in self._prices.items():
+            if buffer:
+                values = dict(buffer)  # copy + clear is atomic for the event loop (handlers share this dict)
+                buffer.clear()
+                await cache_prices(values, testnet)
+
+    async def _price_flush_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await self.flush_prices()
+            except Exception:  # pragma: no cover - cache is best effort
+                logger.debug("price flush failed", exc_info=True)
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=PRICE_FLUSH_SECONDS)
+            except TimeoutError:
+                pass
 
     def _start_user_stream(self, account: Account) -> tuple[ExchangeStream, asyncio.Task] | None:
         client = client_for_account(account)
