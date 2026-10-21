@@ -19,7 +19,7 @@ commit: **inglês** (Conventional Commits: `feat(api): ...`, `fix(risk): ...`, `
 |---|---|
 | Configuração (env vars) | `backend/app/core/config.py` (+ `.env.example` na raiz) |
 | Banco / sessões | `backend/app/core/database.py`, modelos em `backend/app/models/` |
-| Migrações | `backend/alembic/versions/` (head atual: `0005_order_and_position_take_profit.py`) |
+| Migrações | `backend/alembic/versions/` (head atual: `0006_account_exchange.py`) |
 | Segurança (JWT, AES-GCM, papéis) | `backend/app/core/security.py`, `backend/app/api/deps.py` |
 | Rotas da API (`/api/v1`) | `backend/app/api/v1/endpoints/` e `backend/app/api/v1/router.py` |
 | Schemas | `backend/app/schemas/` |
@@ -28,7 +28,8 @@ commit: **inglês** (Conventional Commits: `feat(api): ...`, `fix(risk): ...`, `
 | Kill switch | `backend/app/services/kill_switch.py` |
 | Bots | `backend/app/services/bot_runner.py`, `backend/app/strategy/` |
 | Backtest | `backend/app/backtest/engine.py`, `backend/app/backtest/data.py` |
-| Binance | `backend/app/services/binance_client.py`, `binance_ws.py`, `reconciler.py` |
+| Exchanges (adaptador) | `backend/app/exchanges/` (`base.py` interface `ExchangeAdapter`, `registry.py` por conta, `bybit.py` experimental) — `docs/EXCHANGES.md` |
+| Binance | `backend/app/services/binance_client.py` (implementa `ExchangeAdapter`), `binance_ws.py`, `reconciler.py` |
 | Tarefas Celery | `backend/app/tasks/celery_app.py` (agenda), `backend/app/tasks/bot_tasks.py`, `backend/app/services/jobs.py` |
 | WebSockets (processo) | `backend/app/workers/streams.py`, `backend/app/workers/market_feed.py` |
 | Tempo real (WebSocket da API) e trading manual | `backend/app/services/realtime.py`, `api/v1/endpoints/realtime_ws.py`, `services/manual_trading.py`, `services/paper_orders.py`, `api/v1/endpoints/trading.py`, `frontend/lib/realtime.ts` — `docs/REALTIME.md` |

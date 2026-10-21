@@ -48,7 +48,7 @@
 | **prometheus / grafana** | Opcionais (`docker compose --profile monitoring up -d`), portas só em `127.0.0.1` (9090 e 3001). Dashboard provisionado em `infra/monitoring/grafana/dashboards`. |
 | **Redis** | Broker do Celery, cache de preços e de klines do scanner, rate limiting, locks distribuídos por conta/bot, **pub/sub do tempo real** (`rt:market:*`, `rt:ws:<workspace>`, `rt:global`) e registro de candles assinados. |
 | **PostgreSQL** | Persistência (usuários, workspaces, contas com chaves criptografadas, bots, ordens, execuções, posições, equity, backtests, auditoria). |
-| **Binance** | REST assinado (HMAC-SHA256) para ordens/conta; WebSocket para mercado e user data stream. |
+| **Exchanges** (`app/exchanges`) | Interface `ExchangeAdapter` (REST de mercado, filtros, conta, posições, ordens com `clientOrderId`, alavancagem/margem, funding, user-data e market streams) com registro por conta (`accounts.exchange`, `adapter_for_account`). Implementação de produção: **Binance USDT-M** (REST assinado HMAC-SHA256 + WebSockets); Bybit V5 como esqueleto experimental desligado por padrão. Veja [EXCHANGES.md](EXCHANGES.md). |
 
 ## Fluxo de uma ordem
 
@@ -57,7 +57,8 @@
    seleção automática, **pausa por evento econômico** e **filtro de notícias/sentimento** (bloquear ou reduzir o
    tamanho). Eles nunca criam ordens e nunca afetam saídas — veja [NEWS.md](NEWS.md).
 2. `OrderService` arredonda quantidade/preço pelos filtros do símbolo (`SymbolFilters`), verifica o **kill switch global** e chama `RiskManager.validate_order()` com seis regras: kill switch por drawdown, perda diária, stop loss obrigatório, alavancagem, risco por trade e margem disponível. Ordens *reduce-only* sempre passam.
-3. O executor é escolhido por conta (`build_executor`):
+3. O executor é escolhido por conta (`build_executor`); o `LiveExecutor` recebe o adaptador da exchange da conta
+   (`client_for_account` → `app.exchanges.registry.adapter_for_account`):
    - **`PaperExecutor` (padrão)** — preenchimento simulado com taxa e slippage configuráveis, stops simulados, ledger de paper na própria conta.
    - **`LiveExecutor`** — somente se `LIVE_TRADING_ENABLED=true` **e** a conta estiver em `execution_mode=live`. Envia a ordem + `STOP_MARKET` *reduce-only* à Binance.
 4. User data stream (WebSocket) + `Reconciler` mantêm ordens, execuções e posições consistentes com a corretora.
