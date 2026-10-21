@@ -354,6 +354,7 @@ class OrderService:
             result.kill_switch = decision.kill_switch
             return result
 
+        before_qty = await self._position_qty(db, account, symbol)
         try:
             result = await self.executor.execute(
                 db,
@@ -385,10 +386,43 @@ class OrderService:
                 price=result.fill_price,
                 tag=intent.tag,
                 paper=self.executor.is_paper,
+                mode=self._mode,
             )
+            await self._position_events(db, account, symbol, before_qty, result, leverage)
         else:
             await self._reject(db, account, bot, intent, symbol, qty, leverage, result.reason)
         return result
+
+    async def _position_qty(self, db: AsyncSession, account: Account, symbol: str) -> Decimal | None:
+        """Paper positions change synchronously; live ones are tracked by the reconciler/user stream."""
+        if not self.executor.is_paper:
+            return None
+        pos = await get_position(db, account, symbol)
+        return Decimal(pos.quantity) if pos is not None else Decimal("0")
+
+    async def _position_events(
+        self,
+        db: AsyncSession,
+        account: Account,
+        symbol: str,
+        before: Decimal | None,
+        result: ExecutionResult,
+        leverage: int,
+    ) -> None:
+        if before is None:
+            return
+        after = await self._position_qty(db, account, symbol) or Decimal("0")
+        ctx = {"workspace_id": account.workspace_id, "account_id": account.id, "symbol": symbol}
+        if before != 0 and (after == 0 or (after > 0) != (before > 0)):
+            await log_event(
+                db, "position.closed", **ctx, side="LONG" if before > 0 else "SHORT", quantity=abs(before),
+                price=result.fill_price, realized_pnl=result.realized_pnl,
+            )  # fmt: skip
+        if after != 0 and (before == 0 or (after > 0) != (before > 0)):
+            await log_event(
+                db, "position.opened", **ctx, side="LONG" if after > 0 else "SHORT", quantity=abs(after),
+                price=result.fill_price, leverage=leverage,
+            )  # fmt: skip
 
     @property
     def _mode(self) -> str:

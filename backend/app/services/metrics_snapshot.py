@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Account, BotConfig, Position
+from app.services.alerts.service import recent_alert_counts
 from app.services.execution import is_global_kill_switch_on
 from app.services.health import streams_heartbeat_age
 
@@ -49,4 +50,5 @@ async def collect(db: AsyncSession) -> dict[str, Any]:
         "account_rows": rows,
         "global_kill": await is_global_kill_switch_on(db),
         "streams_heartbeat_age": await streams_heartbeat_age(),
+        "alerts_24h": await recent_alert_counts(db),
     }

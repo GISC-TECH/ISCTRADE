@@ -71,7 +71,18 @@ def _task_failure(sender: Any = None, task_id: str | None = None, exception: Bas
 
 
 def on_task_failure(name: str, task_id: str | None, exception: BaseException | None) -> None:
-    """Extension point (alerts are attached in app.services.alerts)."""
+    """Alert on task failures (except the alert tasks themselves, to avoid loops). Throttled per task name."""
+    if name.startswith("alerts."):
+        return
+    from app.services.alerts.service import emit_alert
+
+    emit_alert(
+        "task_failed",
+        dedup=f"task:{name}",
+        task=name,
+        task_id=task_id,
+        error=f"{type(exception).__name__}: {exception}"[:300] if exception else None,
+    )
 
 
 @worker_init.connect

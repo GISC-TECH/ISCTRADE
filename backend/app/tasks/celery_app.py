@@ -7,7 +7,7 @@ celery_app = Celery(
     "trading",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.tasks.bot_tasks"],
+    include=["app.tasks.bot_tasks", "app.tasks.alert_tasks"],
 )
 celery_app.conf.update(
     task_serializer="json",
@@ -26,6 +26,10 @@ celery_app.conf.update(
         "reconcile-accounts": {"task": "accounts.reconcile_all", "schedule": float(settings.RECONCILE_SECONDS)},
         "equity-snapshots": {"task": "accounts.snapshot_all", "schedule": float(settings.EQUITY_SNAPSHOT_SECONDS)},
         "daily-risk-reset": {"task": "risk.daily_reset", "schedule": crontab(hour=0, minute=0)},
+        "alerts-daily-summary": {
+            "task": "alerts.daily_summary",
+            "schedule": crontab(hour=settings.ALERT_DAILY_SUMMARY_HOUR_UTC, minute=5),
+        },
     },
 )
 

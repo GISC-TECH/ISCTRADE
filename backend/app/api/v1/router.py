@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import accounts, admin, auth, bots, history, strategies, workspaces
+from app.api.v1.endpoints import accounts, admin, alerts, auth, bots, history, monitoring, strategies, workspaces
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -10,3 +10,5 @@ api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(history.router, prefix="/history", tags=["history"])
 api_router.include_router(strategies.router, prefix="/strategies", tags=["strategies"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
+api_router.include_router(monitoring.router, prefix="/monitoring", tags=["monitoring"])

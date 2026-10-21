@@ -134,6 +134,7 @@ class StreamSupervisor:
                 await db.commit()
 
         stream = UserDataStream(client, handle, name=f"user-{account_id}")
+        stream.alert_context = {"workspace_id": account.workspace_id, "account_id": account_id}
         return stream, asyncio.create_task(stream.run())
 
     async def shutdown(self) -> None:

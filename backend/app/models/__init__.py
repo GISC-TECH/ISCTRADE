@@ -1,4 +1,5 @@
 from app.models.account import Account
+from app.models.alert import AlertRecord, AlertSettings
 from app.models.audit import AuditLog
 from app.models.backtest import BacktestRun
 from app.models.base import Base
@@ -38,4 +39,6 @@ __all__ = [
     "BacktestRun",
     "BacktestStatus",
     "SystemSetting",
+    "AlertSettings",
+    "AlertRecord",
 ]

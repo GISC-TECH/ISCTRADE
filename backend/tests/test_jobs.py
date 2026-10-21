@@ -22,8 +22,12 @@ def test_beat_schedule_registered() -> None:
         "accounts.reconcile_all",
         "accounts.snapshot_all",
         "risk.daily_reset",
+        "alerts.daily_summary",
     }
-    for name in ("bots.tick", "bots.start", "accounts.snapshot", "accounts.reconcile", "risk.daily_reset"):
+    import app.tasks.alert_tasks  # noqa: F401
+
+    for name in ("bots.tick", "bots.start", "accounts.snapshot", "accounts.reconcile", "risk.daily_reset",
+                 "alerts.process", "alerts.deliver", "alerts.daily_summary"):  # fmt: skip
         assert name in celery_app.tasks
 
 

@@ -81,13 +81,14 @@ class Settings(BaseSettings):
     ALERT_WS_DISCONNECT_SECONDS: int = 120
     ALERT_DAILY_SUMMARY_HOUR_UTC: int = 0  # summary of the previous UTC day, sent at HH:05 UTC
     WHATSAPP_ENABLED: bool = False
-    WHATSAPP_PROVIDER: str = "wego"  # wego (= generic_http) | generic_http | wago_api | meta_cloud | evolution
-    WHATSAPP_API_URL: str = ""
+    WHATSAPP_PROVIDER: str = "wago"  # wago (WAGO hosted API) | wago_api | meta_cloud | evolution | generic_http
+    WHATSAPP_API_URL: str = ""  # empty = provider default (wago: https://wago-api.hablame.co/v1)
     WHATSAPP_API_TOKEN: str = ""
     WHATSAPP_AUTH_HEADER: str = "Authorization"
     WHATSAPP_AUTH_PREFIX: str = "Bearer "
     WHATSAPP_SESSION: str = Field(default="", validation_alias=AliasChoices("WHATSAPP_SESSION", "WHATSAPP_INSTANCE"))
-    WHATSAPP_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_DEVICE_ID: str = ""  # wago: optional WhatsApp number/device ID used to send
+    WHATSAPP_PHONE_NUMBER_ID: str = ""  # meta_cloud
     WHATSAPP_HTTP_METHOD: str = "POST"
     WHATSAPP_BODY_TEMPLATE: str = '{"to": "{to}", "text": "{text}"}'
     WHATSAPP_EXTRA_HEADERS: str = ""  # optional JSON object with extra headers

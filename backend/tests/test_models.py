@@ -8,6 +8,8 @@ from app.models import Account, Base, BotConfig, Order, OrderSide, OrderType, Us
 
 EXPECTED_TABLES = {
     "users",
+    "alert_settings",
+    "alerts",
     "workspaces",
     "workspace_members",
     "accounts",

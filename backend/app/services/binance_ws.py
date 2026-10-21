@@ -62,6 +62,8 @@ class BinanceStream:
         self.down_since: float | None = time.monotonic()
         self.down_alerted = False
         self.down_alert_seconds = float(settings.ALERT_WS_DISCONNECT_SECONDS)
+        # workspace_id/account_id attached to WS alerts (empty for shared market streams = global alert)
+        self.alert_context: dict = {}
 
     @property
     def metric_label(self) -> str:
@@ -70,10 +72,26 @@ class BinanceStream:
     async def on_down(self, seconds: float) -> None:
         """Hook: the stream has been disconnected for longer than `down_alert_seconds`."""
         logger.warning("ws %s disconnected for %.0fs", self.name, seconds)
+        from app.services.alerts.service import emit_alert
+
+        emit_alert(
+            "ws_disconnected", dedup=f"ws:{self.name}", stream=self.name, seconds=round(seconds), **self.alert_context
+        )
 
     async def on_recovered(self, seconds: float) -> None:
         """Hook: the stream reconnected after an `on_down` notification."""
         logger.info("ws %s recovered after %.0fs", self.name, seconds)
+        from app.services.alerts.service import emit_alert
+
+        emit_alert(
+            "ws_disconnected",
+            severity="info",
+            dedup=f"ws-up:{self.name}",
+            stream=self.name,
+            seconds=round(seconds),
+            recovered=True,
+            **self.alert_context,
+        )
 
     async def _mark_connected(self) -> None:
         if self.connections > 1:
