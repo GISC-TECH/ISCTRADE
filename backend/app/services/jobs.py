@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.core.metrics import BOT_TICKS, safe_inc
 from app.core.redis import get_redis
 from app.models import Account, AccountStatus, BotConfig, BotState, ExecutionMode
 from app.models.base import utcnow
@@ -84,6 +85,7 @@ async def tick_bot(
                 close = getattr(market, "close", None)
                 if close:
                     await close()
+            safe_inc(BOT_TICKS, result=result.status)
             return {"bot_id": str(bot_id), "status": result.status, "message": result.message,
                     "filled": result.filled, "rejected": result.rejected}  # fmt: skip
 

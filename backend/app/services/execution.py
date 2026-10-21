@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.metrics import ORDERS, reason_label, safe_inc
 from app.models import (
     Account,
     BotConfig,
@@ -371,6 +372,7 @@ class OrderService:
             logger.exception("order execution failed")
             return await self._reject(db, account, bot, intent, symbol, qty, leverage, f"execution_error: {exc}"[:255])
         if result.ok:
+            safe_inc(ORDERS, mode=self._mode, result="filled" if self.executor.is_paper else "submitted", reason="none")
             await log_event(
                 db,
                 "order.filled" if self.executor.is_paper else "order.submitted",
@@ -387,6 +389,10 @@ class OrderService:
         else:
             await self._reject(db, account, bot, intent, symbol, qty, leverage, result.reason)
         return result
+
+    @property
+    def _mode(self) -> str:
+        return "paper" if self.executor.is_paper else "live"
 
     async def _reject(
         self,
@@ -416,6 +422,7 @@ class OrderService:
             reason=reason[:255],
         )
         db.add(order)
+        safe_inc(ORDERS, mode=self._mode, result="rejected", reason=reason_label(reason))
         await log_event(
             db,
             "order.rejected",

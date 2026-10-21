@@ -19,15 +19,19 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import session_scope
+from app.core.logging import configure_logging
+from app.core.metrics import start_metrics_server
 from app.models import Account, AccountStatus, BotConfig, ExecutionMode
 from app.services.accounts import client_for_account
 from app.services.binance_ws import MarketStream, UserDataStream
+from app.services.health import write_streams_heartbeat
 from app.services.prices import cache_price
 from app.services.reconciler import Reconciler
 from app.strategy.state_machine import ACTIVE_STATES
 
 logger = logging.getLogger("streams")
 REFRESH_SECONDS = 60
+HEARTBEAT_SECONDS = 15
 
 
 class StreamSupervisor:
@@ -40,6 +44,7 @@ class StreamSupervisor:
         self._stop.set()
 
     async def run(self) -> None:
+        heartbeat = asyncio.create_task(self._heartbeat())
         while not self._stop.is_set():
             try:
                 await self.refresh()
@@ -49,7 +54,17 @@ class StreamSupervisor:
                 await asyncio.wait_for(self._stop.wait(), timeout=REFRESH_SECONDS)
             except TimeoutError:
                 pass
+        heartbeat.cancel()
         await self.shutdown()
+
+    async def _heartbeat(self) -> None:
+        """Liveness signal read by /health/ready and the btp_streams_heartbeat_age_seconds gauge."""
+        while not self._stop.is_set():
+            await write_streams_heartbeat()
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=HEARTBEAT_SECONDS)
+            except TimeoutError:
+                pass
 
     async def refresh(self) -> None:
         async with session_scope() as db:
@@ -92,7 +107,10 @@ class StreamSupervisor:
                 self.market.pop(testnet)
             if syms:
                 stream = MarketStream(
-                    [f"{s.lower()}@markPrice@1s" for s in sorted(syms)], self._price_handler(testnet), testnet=testnet
+                    [f"{s.lower()}@markPrice@1s" for s in sorted(syms)],
+                    self._price_handler(testnet),
+                    testnet=testnet,
+                    name=f"market-{'testnet' if testnet else 'mainnet'}",
                 )
                 self.market[testnet] = (stream, asyncio.create_task(stream.run()), key)
 
@@ -129,7 +147,8 @@ class StreamSupervisor:
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    configure_logging()
+    start_metrics_server(settings.METRICS_PORT)
     sup = StreamSupervisor()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

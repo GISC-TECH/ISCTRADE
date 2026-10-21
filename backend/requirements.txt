@@ -14,3 +14,4 @@ PyJWT==2.10.1
 cryptography==44.0.0
 python-multipart==0.0.20
 websockets==14.1
+prometheus-client==0.21.1

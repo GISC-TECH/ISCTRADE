@@ -28,3 +28,6 @@ celery_app.conf.update(
         "daily-risk-reset": {"task": "risk.daily_reset", "schedule": crontab(hour=0, minute=0)},
     },
 )
+
+# Signal handlers (logging, request-id propagation, metrics). Imported for side effects.
+import app.tasks.signals  # noqa: E402,F401

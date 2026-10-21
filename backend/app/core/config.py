@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -67,13 +67,40 @@ class Settings(BaseSettings):
     RECONCILE_SECONDS: int = 60
     EQUITY_SNAPSHOT_SECONDS: int = 300
 
+    # Observability
+    LOG_FORMAT: str = "json"  # json | text
+    LOG_LEVEL: str = "INFO"
+    METRICS_ENABLED: bool = True
+    METRICS_TOKEN: str = ""  # optional bearer token required on /metrics (empty = internal network only)
+    METRICS_PORT: int = 0  # >0: Celery worker / streams expose their own /metrics on this port
+    STREAMS_HEARTBEAT_STALE_SECONDS: int = 180
+
+    # Alerts (WhatsApp). Messages never contain credentials.
+    ALERTS_ENABLED: bool = True  # master switch for generating alerts (history is kept even without a channel)
+    ALERT_THROTTLE_MINUTES: int = 15
+    ALERT_WS_DISCONNECT_SECONDS: int = 120
+    ALERT_DAILY_SUMMARY_HOUR_UTC: int = 0  # summary of the previous UTC day, sent at HH:05 UTC
+    WHATSAPP_ENABLED: bool = False
+    WHATSAPP_PROVIDER: str = "wego"  # wego (= generic_http) | generic_http | wago_api | meta_cloud | evolution
+    WHATSAPP_API_URL: str = ""
+    WHATSAPP_API_TOKEN: str = ""
+    WHATSAPP_AUTH_HEADER: str = "Authorization"
+    WHATSAPP_AUTH_PREFIX: str = "Bearer "
+    WHATSAPP_SESSION: str = Field(default="", validation_alias=AliasChoices("WHATSAPP_SESSION", "WHATSAPP_INSTANCE"))
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_HTTP_METHOD: str = "POST"
+    WHATSAPP_BODY_TEMPLATE: str = '{"to": "{to}", "text": "{text}"}'
+    WHATSAPP_EXTRA_HEADERS: str = ""  # optional JSON object with extra headers
+    WHATSAPP_TO: Annotated[list[str], NoDecode] = []  # default recipients (E.164, comma-separated)
+    WHATSAPP_TIMEOUT_SECONDS: float = 10.0
+
     # Risk defaults
     RISK_MAX_RISK_PER_TRADE_PCT: float = 1.0
     RISK_MAX_LEVERAGE: int = 5
     RISK_MAX_DAILY_LOSS_PCT: float = 3.0
     RISK_MAX_DRAWDOWN_PCT: float = 15.0
 
-    @field_validator("CORS_ORIGINS", mode="before")
+    @field_validator("CORS_ORIGINS", "WHATSAPP_TO", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
         if isinstance(v, str):

@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.metrics import RECONCILER_CHANGES, safe_inc
 from app.models import Account, Order, OrderSide, OrderStatus, Position, Trade
 from app.services.audit import log_event
 from app.services.binance_client import BinanceAPIError, BinanceFuturesClient
@@ -209,6 +210,9 @@ class Reconciler:
         )
         trades = await self.sync_trades(symbols) if symbols else 0
         summary = {"positions_changed": positions, "orders_updated": orders, "trades_inserted": trades}
+        for kind, n in (("positions", positions), ("orders", orders), ("trades", trades)):
+            if n:
+                safe_inc(RECONCILER_CHANGES, n, kind=kind)
         if positions or orders or trades:
             await log_event(
                 self.db, "reconcile.changes", workspace_id=self.account.workspace_id, account_id=self.account.id,

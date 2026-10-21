@@ -4,33 +4,19 @@ from __future__ import annotations
 
 import logging
 import uuid
-from decimal import Decimal
-from enum import Enum
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redaction import redact
 from app.models.audit import AuditLog
 
 logger = logging.getLogger("audit")
 
-_SENSITIVE = ("secret", "password", "api_key", "token", "signature")
-
 
 def _sanitize(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            str(k): ("***" if any(s in str(k).lower() for s in _SENSITIVE) else _sanitize(v)) for k, v in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_sanitize(v) for v in value]
-    if isinstance(value, (uuid.UUID, Decimal)):
-        return str(value)
-    if isinstance(value, Enum):
-        return value.value
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
+    """Mask sensitive keys and scrub secret-looking strings (see app.core.redaction)."""
+    return redact(value)
 
 
 async def log_event(

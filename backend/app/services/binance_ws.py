@@ -20,6 +20,7 @@ from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
 
 from app.core.config import settings
+from app.core.metrics import WS_CONNECTED, WS_RECONNECTS, safe_inc
 from app.services.binance_client import BinanceFuturesClient
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,13 @@ logger = logging.getLogger(__name__)
 Handler = Callable[[dict[str, Any]], Awaitable[None]]
 MAX_CONNECTION_AGE = 23 * 3600
 LISTEN_KEY_KEEPALIVE = 30 * 60
+
+
+def _set_gauge(label: str, value: float) -> None:
+    try:
+        WS_CONNECTED.labels(stream=label).set(value)
+    except Exception:  # pragma: no cover
+        pass
 
 
 def ws_base_url(testnet: bool) -> str:
@@ -51,6 +59,45 @@ class BinanceStream:
         self.connections = 0
         self.messages = 0
         self._stop = asyncio.Event()
+        self.down_since: float | None = time.monotonic()
+        self.down_alerted = False
+        self.down_alert_seconds = float(settings.ALERT_WS_DISCONNECT_SECONDS)
+
+    @property
+    def metric_label(self) -> str:
+        return self.name
+
+    async def on_down(self, seconds: float) -> None:
+        """Hook: the stream has been disconnected for longer than `down_alert_seconds`."""
+        logger.warning("ws %s disconnected for %.0fs", self.name, seconds)
+
+    async def on_recovered(self, seconds: float) -> None:
+        """Hook: the stream reconnected after an `on_down` notification."""
+        logger.info("ws %s recovered after %.0fs", self.name, seconds)
+
+    async def _mark_connected(self) -> None:
+        if self.connections > 1:
+            safe_inc(WS_RECONNECTS, stream=self.metric_label)
+        _set_gauge(self.metric_label, 1)
+        if self.down_alerted and self.down_since is not None:
+            await self._safe_hook(self.on_recovered(time.monotonic() - self.down_since))
+        self.down_since = None
+        self.down_alerted = False
+
+    async def _mark_disconnected(self) -> None:
+        _set_gauge(self.metric_label, 0)
+        now = time.monotonic()
+        if self.down_since is None:
+            self.down_since = now
+        elif not self.down_alerted and now - self.down_since >= self.down_alert_seconds:
+            self.down_alerted = True
+            await self._safe_hook(self.on_down(now - self.down_since))
+
+    async def _safe_hook(self, coro) -> None:
+        try:
+            await coro
+        except Exception:
+            logger.exception("ws %s hook failed", self.name)
 
     async def url(self) -> str:  # pragma: no cover - abstract
         raise NotImplementedError
@@ -82,6 +129,7 @@ class BinanceStream:
                 async with ws_connect(url, ping_interval=20, ping_timeout=20, open_timeout=10) as ws:
                     self.connections += 1
                     backoff = self.initial_backoff
+                    await self._mark_connected()
                     opened = time.monotonic()
                     logger.info("ws %s connected (%d)", self.name, self.connections)
                     await self.on_open(ws)
@@ -106,6 +154,7 @@ class BinanceStream:
                 await self.on_close()
             if self._stop.is_set():
                 break
+            await self._mark_disconnected()
             await self._sleep(backoff)
             backoff = min(backoff * 2, self.max_backoff)
 
