@@ -14,6 +14,7 @@ from app.models.enums import (
     OrderType,
 )
 from app.models.news import EconomicEvent, NewsItem
+from app.models.refresh_token import RefreshToken
 from app.models.scanner import MarketScan
 from app.models.system import SystemSetting
 from app.models.trading import EquitySnapshot, Order, Position, Trade
@@ -23,6 +24,7 @@ from app.models.workspace import Workspace, WorkspaceMember
 __all__ = [
     "Base",
     "User",
+    "RefreshToken",
     "Workspace",
     "WorkspaceMember",
     "Account",

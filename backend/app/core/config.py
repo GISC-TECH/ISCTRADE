@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # A rotated refresh token presented again within this window is a concurrent refresh, not theft.
+    REFRESH_REUSE_GRACE_SECONDS: int = 10
     COOKIE_SECURE: bool = True
     COOKIE_DOMAIN: str | None = None
 

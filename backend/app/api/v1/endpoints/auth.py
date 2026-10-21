@@ -1,7 +1,9 @@
+import logging
 import uuid
+from datetime import timedelta
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import ACCESS_COOKIE_NAME, get_current_user
@@ -20,11 +22,14 @@ from app.core.security import (
     verify_password,
     verify_token,
 )
+from app.models.base import as_utc, utcnow
+from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.schemas.user import PasswordChange, TokenResponse, UserCreate, UserLogin, UserRead, UserUpdate
 from app.services.audit import log_event
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 REFRESH_COOKIE_NAME = "refresh_token"
 # Non-sensitive marker readable by the Next.js middleware (the refresh cookie is path-scoped to the API).
@@ -38,9 +43,27 @@ def _cookie_opts() -> dict:
     return dict(httponly=True, secure=settings.COOKIE_SECURE, samesite="lax", domain=settings.COOKIE_DOMAIN or None)
 
 
-def issue_tokens(response: Response, user: User) -> TokenResponse:
+async def issue_tokens(
+    response: Response, user: User, db: AsyncSession, family: str | None = None, parent: RefreshToken | None = None
+) -> TokenResponse:
+    """Set a new access/refresh pair. Every refresh token is recorded (single use) under its login family."""
+    jti, family = uuid.uuid4().hex, family or uuid.uuid4().hex
+    now = utcnow()
+    if parent is not None:
+        parent.used_at, parent.replaced_by = parent.used_at or now, jti
+    db.add(RefreshToken(
+        jti=jti, user_id=user.id, family_id=family, created_at=now,
+        expires_at=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+    ))  # fmt: skip
+    # Housekeeping: drop this user's expired rows.
+    await db.execute(
+        delete(RefreshToken)
+        .where(RefreshToken.user_id == user.id, RefreshToken.expires_at < now)
+        .execution_options(synchronize_session=False)
+    )
+    await db.commit()
     access = create_access_token(str(user.id), {"role": user.role.value, "ver": user.token_version})
-    refresh = create_refresh_token(str(user.id), {"ver": user.token_version})
+    refresh = create_refresh_token(str(user.id), {"ver": user.token_version, "jti": jti, "fam": family})
     opts = _cookie_opts()
     response.set_cookie(ACCESS_COOKIE_NAME, access, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, path="/", **opts)
     response.set_cookie(
@@ -130,32 +153,77 @@ async def login(
         )  # fmt: skip
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
     await log_event(db, "auth.login", user_id=user.id, ip_address=client_ip(request), commit=True)
-    return issue_tokens(response, user)
+    return await issue_tokens(response, user, db)
+
+
+async def _revoke_family(db: AsyncSession, family: str) -> None:
+    await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.family_id == family, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+        .execution_options(synchronize_session=False)
+    )
 
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(
+    request: Request,
     response: Response,
     refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    """Issues a new access token (and rotates the refresh token) from the httpOnly refresh cookie."""
+    """Exchange the httpOnly refresh cookie for a new pair. Refresh tokens are single use: presenting one that was
+    already exchanged (outside a short grace window for concurrent tabs) is treated as theft and revokes the whole
+    login family, logging out both the attacker and the victim."""
     if not refresh_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessão expirada")
     try:
         payload = verify_token(refresh_token, REFRESH_TOKEN_TYPE)
         user = await db.get(User, uuid.UUID(payload["sub"]))
+        jti, family = str(payload["jti"]), payload.get("fam")
     except (TokenError, KeyError, ValueError):
         clear_tokens(response)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessão expirada") from None
     if user is None or not user.is_active or payload.get("ver", 0) != user.token_version:
         clear_tokens(response)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessão revogada")
-    return issue_tokens(response, user)
+    if family is None:  # issued before the ledger existed: accept once and start a tracked family
+        return await issue_tokens(response, user, db)
+
+    row = await db.scalar(select(RefreshToken).where(RefreshToken.jti == jti).with_for_update())
+    if row is None or row.user_id != user.id or row.family_id != family or row.revoked_at is not None:
+        clear_tokens(response)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessão revogada")
+    now = utcnow()
+    if row.used_at is not None:
+        if now - as_utc(row.used_at) <= timedelta(seconds=settings.REFRESH_REUSE_GRACE_SECONDS):
+            return await issue_tokens(response, user, db, family)  # concurrent refresh from another tab
+        await _revoke_family(db, family)
+        await log_event(
+            db, "auth.refresh_reuse_detected", level="critical", user_id=user.id, ip_address=client_ip(request),
+            family=family,
+        )  # fmt: skip
+        await db.commit()
+        clear_tokens(response)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sessão revogada")
+    return await issue_tokens(response, user, db, family, parent=row)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(response: Response) -> None:
+async def logout(
+    response: Response,
+    refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Clear the cookies and revoke this login's refresh family server-side."""
+    if refresh_token:
+        try:
+            family = verify_token(refresh_token, REFRESH_TOKEN_TYPE).get("fam")
+        except TokenError:
+            family = None
+        if family:
+            await _revoke_family(db, str(family))
+            await db.commit()
     clear_tokens(response)
 
 
@@ -200,4 +268,4 @@ async def change_password(
     await log_event(db, "auth.password_changed", user_id=user.id)
     await db.commit()
     await db.refresh(user)
-    return issue_tokens(response, user)
+    return await issue_tokens(response, user, db)

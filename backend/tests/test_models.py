@@ -17,6 +17,7 @@ EXPECTED_TABLES = {
     "workspace_members",
     "accounts",
     "bot_configs",
+    "refresh_tokens",
     "orders",
     "trades",
     "positions",
