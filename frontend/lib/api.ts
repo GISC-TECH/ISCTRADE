@@ -6,12 +6,16 @@ import type {
   AccountDashboard,
   AdminStats,
   AdminWorkspace,
+  AlertItem,
+  AlertSettings,
+  AlertSettingsUpdate,
   AuditEntry,
   BacktestRequest,
   BacktestRun,
   Bot,
   EquityPoint,
   Member,
+  MonitoringStatus,
   Order,
   Page,
   PositionOut,
@@ -111,6 +115,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
 const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 const patch = <T>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+const put = <T>(path: string, body: unknown) => request<T>(path, { method: "PUT", body: JSON.stringify(body) });
 const del = (path: string) => request<void>(path, { method: "DELETE" });
 
 export const api = {
@@ -180,6 +185,13 @@ export const api = {
   equity: (params?: Query) => request<EquityPoint[]>(`/history/equity${qs(params)}`),
   positions: (params?: Query) => request<(PositionOut & { account_id: string })[]>(`/history/positions${qs(params)}`),
   audit: (params?: Query) => request<Page<AuditEntry>>(`/history/audit${qs(params)}`),
+
+  // monitoring / alerts
+  monitoringStatus: () => request<MonitoringStatus>("/monitoring/status"),
+  alertSettings: () => request<AlertSettings>("/alerts/settings"),
+  updateAlertSettings: (data: AlertSettingsUpdate) => put<AlertSettings>("/alerts/settings", data),
+  sendTestAlert: (message?: string) => post<AlertItem>("/alerts/test", message ? { message } : {}),
+  alerts: (params?: Query) => request<Page<AlertItem>>(`/alerts/${qs(params)}`),
 
   // admin
   adminStats: () => request<AdminStats>("/admin/stats"),

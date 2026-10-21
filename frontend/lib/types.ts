@@ -275,3 +275,73 @@ export interface AdminWorkspace {
   accounts: number;
   running_accounts: number;
 }
+
+// monitoring / alerts
+export type AlertSeverity = "info" | "warning" | "critical";
+export type AlertStatus = "pending" | "sent" | "partial" | "failed" | "disabled";
+
+export interface AlertChannelStatus {
+  channel: string;
+  enabled: boolean;
+  provider: string;
+  provider_known: boolean;
+  configured: boolean;
+  default_recipients: number;
+}
+
+export interface AlertEventInfo {
+  key: string;
+  label: string;
+  severity: AlertSeverity;
+  default_enabled: boolean;
+}
+
+export interface AlertSettings {
+  enabled: boolean;
+  recipients: string[];
+  events: Record<string, boolean>;
+  min_severity: AlertSeverity;
+  throttle_minutes: number;
+  uses_default_recipients: boolean;
+  available_events: AlertEventInfo[];
+  channel: AlertChannelStatus;
+}
+
+export type AlertSettingsUpdate = Partial<
+  Pick<AlertSettings, "enabled" | "recipients" | "events" | "min_severity" | "throttle_minutes">
+>;
+
+export interface AlertItem {
+  id: string;
+  created_at: string;
+  workspace_id: string | null;
+  account_id: string | null;
+  event: string;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  status: AlertStatus;
+  channel: string;
+  recipients: string[];
+  attempts: number;
+  error: string | null;
+  sent_at: string | null;
+}
+
+export interface HealthCheck {
+  ok: boolean;
+  latency_ms?: number;
+  error?: string;
+  skipped?: string;
+  state?: string;
+  age_seconds?: number | null;
+}
+
+export interface MonitoringStatus {
+  readiness: { status: "ready" | "degraded" | "not_ready"; ready: boolean; checks: Record<string, HealthCheck> };
+  channel: AlertChannelStatus;
+  alerts_24h: number;
+  alerts_failed_24h: number;
+  alerts_enabled: boolean;
+  metrics_enabled: boolean;
+}
