@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth-provider";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/common";
 import { BotOptionsFields, DEFAULT_BOT_OPTIONS, withDefaults } from "@/components/bot-options";
 import { ParamFields, defaultParams } from "@/components/param-fields";
+import { PresetPicker } from "@/components/preset-picker";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -24,16 +25,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, errorMessage } from "@/lib/api";
 import { INTERVALS } from "@/lib/constants";
 import { dateTime } from "@/lib/format";
-import type { Account, Bot, BotOptions, StrategyInfo } from "@/lib/types";
+import type { Account, Bot, BotOptions, BotPreset, StrategyInfo } from "@/lib/types";
 
 
 function CreateBotDialog({
   accounts,
   strategies,
+  presets,
   onCreated,
 }: {
   accounts: Account[];
   strategies: StrategyInfo[];
+  presets: BotPreset[];
   onCreated: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -47,11 +50,33 @@ function CreateBotDialog({
   const [params, setParams] = useState<Record<string, unknown>>(() => defaultParams(strategies[0]));
   const [options, setOptions] = useState<BotOptions>(DEFAULT_BOT_OPTIONS);
   const [error, setError] = useState<string | null>(null);
+  const [presetKey, setPresetKey] = useState("");
+  // Presets are for paper evaluation: with a preset selected only paper accounts are offered.
+  const accountOptions = useMemo(
+    () => (presetKey ? accounts.filter((a) => a.execution_mode !== "live") : accounts),
+    [accounts, presetKey]
+  );
 
-  useEffect(() => setParams(defaultParams(strategy)), [strategy]);
   useEffect(() => {
-    if (!accountId && accounts[0]) setAccountId(accounts[0].id);
-  }, [accounts, accountId]);
+    if (!accountOptions.some((a) => a.id === accountId)) setAccountId(accountOptions[0]?.id ?? "");
+  }, [accountOptions, accountId]);
+
+  function selectStrategy(key: string) {
+    setStrategyKey(key);
+    setParams(defaultParams(strategies.find((s) => s.key === key)));
+  }
+
+  function applyPreset(preset: BotPreset | null) {
+    setPresetKey(preset?.key ?? "");
+    if (!preset) return;
+    setName(preset.name);
+    setStrategyKey(preset.strategy_key);
+    setParams({ ...preset.params });
+    setSymbol(preset.symbol);
+    setBotInterval(preset.interval);
+    setLeverage(preset.leverage);
+    setOptions(withDefaults(preset.options));
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -69,6 +94,7 @@ function CreateBotDialog({
       });
       setOpen(false);
       setName("");
+      setPresetKey("");
       onCreated();
     } catch (err) {
       setError(errorMessage(err));
@@ -86,6 +112,10 @@ function CreateBotDialog({
           <DialogDescription>Todas as ordens passam pelo gerenciador de risco da conta.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
+          <PresetPicker id="bot-preset" presets={presets} value={presetKey} onChange={applyPreset} />
+          {presetKey && accountOptions.length === 0 && (
+            <Alert variant="warning">Robôs prontos só podem ser criados em contas paper. Crie uma conta paper.</Alert>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2 space-y-1">
               <Label htmlFor="bot-name">Nome</Label>
@@ -94,16 +124,16 @@ function CreateBotDialog({
             <div className="space-y-1">
               <Label htmlFor="bot-account">Conta</Label>
               <Select id="bot-account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-                {accounts.map((a) => (
+                {accountOptions.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.label}
+                    {a.label} ({a.execution_mode})
                   </option>
                 ))}
               </Select>
             </div>
             <div className="space-y-1">
               <Label htmlFor="bot-strategy">Estratégia</Label>
-              <Select id="bot-strategy" value={strategyKey} onChange={(e) => setStrategyKey(e.target.value)}>
+              <Select id="bot-strategy" value={strategyKey} onChange={(e) => selectStrategy(e.target.value)}>
                 {strategies.map((s) => (
                   <option key={s.key} value={s.key}>
                     {s.name}
@@ -149,7 +179,9 @@ function CreateBotDialog({
           <BotOptionsFields value={options} onChange={setOptions} />
           {error && <Alert variant="destructive">{error}</Alert>}
           <DialogFooter>
-            <Button type="submit">Criar</Button>
+            <Button type="submit" disabled={!accountId}>
+              Criar
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -207,6 +239,7 @@ export default function BotsPage() {
   const [bots, setBots] = useState<Bot[] | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
+  const [presets, setPresets] = useState<BotPreset[]>([]);
   const [error, setError] = useState<string | null>(null);
   const canTrade = workspace?.role === "admin" || workspace?.role === "trader";
 
@@ -218,6 +251,7 @@ export default function BotsPage() {
         setStrategies(s);
       })
       .catch((e) => setError(errorMessage(e)));
+    api.listPresets().then(setPresets).catch(() => setPresets([]));
   }, []);
   useEffect(load, [load, workspace?.id]);
 
@@ -237,7 +271,7 @@ export default function BotsPage() {
     <div>
       <PageHeader title="Bots" description="Bots executam a cada candle fechado (tarefa Celery tick-bots).">
         {canTrade && strategies.length > 0 && (
-          <CreateBotDialog accounts={accounts} strategies={strategies} onCreated={load} />
+          <CreateBotDialog accounts={accounts} strategies={strategies} presets={presets} onCreated={load} />
         )}
       </PageHeader>
       {accounts.length === 0 && bots !== null && (

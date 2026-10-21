@@ -2,10 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { DEFAULT_EVENT_PAUSE, DEFAULT_NEWS_FILTER, EventPauseFields, NewsFilterFields } from "@/components/bot-options";
+import {
+  DEFAULT_EVENT_PAUSE,
+  DEFAULT_NEWS_FILTER,
+  EventPauseFields,
+  NewsFilterFields,
+  withDefaults,
+} from "@/components/bot-options";
 import { EmptyState, PageHeader } from "@/components/common";
 import { EquityChart } from "@/components/equity-chart";
 import { ParamFields, defaultParams } from "@/components/param-fields";
+import { PresetPicker } from "@/components/preset-picker";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,7 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, errorMessage } from "@/lib/api";
 import { INTERVALS } from "@/lib/constants";
 import { dateTime, num, pct, pnlClass, qty, usd } from "@/lib/format";
-import type { BacktestConfig, BacktestFilters, BacktestRun, StrategyInfo } from "@/lib/types";
+import type { BacktestConfig, BacktestFilters, BacktestRun, BotPreset, StrategyInfo } from "@/lib/types";
 
 const DEFAULT_CONFIG: BacktestConfig = {
   initial_balance: 10000,
@@ -156,18 +163,40 @@ export default function StrategiesPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestRun | null>(null);
   const [runs, setRuns] = useState<BacktestRun[]>([]);
+  const [presets, setPresets] = useState<BotPreset[]>([]);
+  const [presetKey, setPresetKey] = useState("");
 
   useEffect(() => {
     api
       .listStrategies()
       .then((s) => {
         setStrategies(s);
-        if (s[0]) setKey(s[0].key);
+        if (s[0]) {
+          setKey(s[0].key);
+          setParams(defaultParams(s[0]));
+        }
       })
       .catch((e) => setError(errorMessage(e)));
     api.listBacktests().then(setRuns).catch(() => undefined);
+    api.listPresets().then(setPresets).catch(() => setPresets([]));
   }, []);
-  useEffect(() => setParams(defaultParams(strategy)), [strategy]);
+
+  function selectStrategy(k: string) {
+    setKey(k);
+    setPresetKey("");
+    setParams(defaultParams(strategies.find((s) => s.key === k)));
+  }
+
+  function applyPreset(preset: BotPreset | null) {
+    setPresetKey(preset?.key ?? "");
+    if (!preset) return;
+    setKey(preset.strategy_key);
+    setParams({ ...preset.params });
+    setSymbol(preset.symbol);
+    setBtInterval(preset.interval);
+    const opts = withDefaults(preset.options);
+    setFilters({ news_filter: opts.news_filter, event_pause: opts.event_pause });
+  }
 
   async function onFile(file: File | undefined) {
     if (file) setCsv(await file.text());
@@ -216,10 +245,17 @@ export default function StrategiesPage() {
       <Card>
         <CardContent className="pt-6">
           <form onSubmit={run} className="space-y-4">
+            <PresetPicker
+              id="bt-preset"
+              presets={presets}
+              value={presetKey}
+              onChange={applyPreset}
+              label="Testar um robô pronto (opcional)"
+            />
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-1">
                 <Label htmlFor="bt-strategy">Estratégia</Label>
-                <Select id="bt-strategy" value={key} onChange={(e) => setKey(e.target.value)}>
+                <Select id="bt-strategy" value={key} onChange={(e) => selectStrategy(e.target.value)}>
                   {strategies.map((s) => (
                     <option key={s.key} value={s.key}>
                       {s.name}

@@ -15,6 +15,7 @@ import type {
   BacktestRun,
   Bot,
   BotOptions,
+  BotPreset,
   Candle,
   CloseAllResult,
   EconomicEvent,
@@ -188,6 +189,7 @@ export const api = {
 
   // strategies / backtests
   listStrategies: () => request<StrategyInfo[]>("/strategies/"),
+  listPresets: () => request<BotPreset[]>("/strategies/presets"),
   runBacktest: (data: BacktestRequest) => post<BacktestRun>("/strategies/backtest", data),
   listBacktests: () => request<BacktestRun[]>("/strategies/backtests"),
   getBacktest: (id: string) => request<BacktestRun>(`/strategies/backtests/${id}`),

@@ -116,6 +116,25 @@ export interface StrategyInfo {
   name: string;
   description: string;
   params: ParamSpec[];
+  category?: string;
+}
+
+/** Ready-made bot template ("robô pronto"). Always paper: presets never enable live trading. */
+export interface BotPreset {
+  key: string;
+  name: string;
+  description: string;
+  strategy_key: string;
+  strategy_name: string;
+  interval: string;
+  symbol: string;
+  leverage: number;
+  params: Record<string, unknown>;
+  options: BotOptions;
+  risk_level: "conservador" | "moderado" | "agressivo";
+  experimental: boolean;
+  execution_mode: "paper";
+  tags: string[];
 }
 
 export interface Bot {
