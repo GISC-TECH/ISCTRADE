@@ -44,6 +44,7 @@ from app.services.execution import (
     is_global_kill_switch_on,
 )
 from app.services.kill_switch import trigger_account_kill_switch
+from app.services.position_mode import HedgeModeUnsupported, ensure_one_way
 from app.services.risk_manager import RiskManager
 from app.services.symbol_filters import SymbolFilters, default_filters
 from app.strategy.base import OrderIntent
@@ -154,6 +155,11 @@ async def place_order(
 
     client = client_factory(account) if _is_live(account) else None
     try:
+        if client is not None:
+            try:
+                await ensure_one_way(client, account.id)
+            except HedgeModeUnsupported as exc:
+                raise ManualTradingError(409, str(exc)) from None
         filters = (
             await client.get_symbol_filters(symbol) if client else await filters_source(symbol, account.is_testnet)
         )

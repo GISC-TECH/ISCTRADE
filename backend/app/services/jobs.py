@@ -108,8 +108,9 @@ async def prepare_live_bot(db: AsyncSession, bot: BotConfig, account: Account) -
     from app.services.accounts import client_for_account
 
     async with client_for_account(account) as client:
-        if await client.get_position_mode():
-            raise RuntimeError("hedge mode is not supported; switch the Binance account to one-way mode")
+        from app.services.position_mode import ensure_one_way
+
+        await ensure_one_way(client, account.id)
         await client.set_margin_type(bot.symbol, "ISOLATED")
         await client.set_leverage(bot.symbol, bot.leverage)
 

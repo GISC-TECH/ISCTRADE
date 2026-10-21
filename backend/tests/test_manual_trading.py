@@ -257,6 +257,29 @@ class FakeLiveClient:
         self.calls.append(("set_leverage", {"symbol": symbol, "leverage": leverage}))
         return {}
 
+    hedge = False
+
+    async def get_position_mode(self):
+        return self.hedge
+
+
+async def test_live_order_refused_in_hedge_mode(db, monkeypatch) -> None:
+    from app.core.config import settings
+
+    user, ws = await make_user_workspace(db)
+    acc = await make_account(db, ws, execution_mode=ExecutionMode.LIVE)
+    await db.commit()
+    fake = FakeLiveClient()
+    fake.hedge = True
+    monkeypatch.setattr(settings, "LIVE_TRADING_ENABLED", True)
+    monkeypatch.setattr(manual_trading, "client_factory", lambda account: fake)
+    req = _req(ManualOrderRequest(symbol="BTCUSDT", side="BUY", type="MARKET", quantity=D("0.01"),
+                                  stop_loss=D("49000")))  # fmt: skip
+    with pytest.raises(ManualTradingError) as err:
+        await manual_trading.place_order(db, acc, req, user.id)
+    assert err.value.status_code == 409 and "hedge mode" in err.value.detail
+    assert not [c for c in fake.calls if c[0] == "place_order"]
+
 
 async def test_live_limit_order_sends_protective_orders(db, monkeypatch) -> None:
     from app.core.config import settings

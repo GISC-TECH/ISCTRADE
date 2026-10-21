@@ -160,7 +160,7 @@ export const api = {
   deleteAccount: (id: string) => del(`/accounts/${id}`),
   accountDashboard: (id: string) => request<AccountDashboard>(`/accounts/${id}/dashboard`),
   verifyAccount: (id: string) =>
-    post<{ ok: boolean; can_trade: boolean | null; wallet_balance: string | null; error: string | null }>(
+    post<{ ok: boolean; can_trade: boolean | null; wallet_balance: string | null; hedge_mode?: boolean | null; error: string | null }>(
       `/accounts/${id}/verify`
     ),
   startAccount: (id: string) => post<Account>(`/accounts/${id}/start`),

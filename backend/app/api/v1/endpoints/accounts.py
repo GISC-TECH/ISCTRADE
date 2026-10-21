@@ -27,6 +27,7 @@ from app.services.dashboard import build_dashboard
 from app.services.dispatch import enqueue
 from app.services.execution import is_global_kill_switch_on
 from app.services.kill_switch import reset_account_kill_switch
+from app.services.position_mode import HEDGE_MODE_MESSAGE
 from app.strategy.state_machine import ACTIVE_STATES
 
 router = APIRouter()
@@ -203,11 +204,15 @@ async def verify_account(
     try:
         async with client_for_account(account) as client:
             data = await client.get_account()
+            hedge = bool(await client.get_position_mode())
     except ExchangeAPIError as exc:
         return AccountVerifyResult(ok=False, error=exc.message)
     except Exception as exc:
         return AccountVerifyResult(ok=False, error=str(exc)[:200])
-    return AccountVerifyResult(ok=True, can_trade=data.get("canTrade"), wallet_balance=data.get("totalWalletBalance"))
+    return AccountVerifyResult(
+        ok=not hedge, can_trade=data.get("canTrade"), wallet_balance=data.get("totalWalletBalance"), hedge_mode=hedge,
+        error=HEDGE_MODE_MESSAGE if hedge else None,
+    )  # fmt: skip
 
 
 @router.post("/{account_id}/start", response_model=AccountRead)

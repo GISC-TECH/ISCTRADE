@@ -109,4 +109,5 @@ class AccountVerifyResult(BaseModel):
     ok: bool
     can_trade: bool | None = None
     wallet_balance: Decimal | None = None
+    hedge_mode: bool | None = None
     error: str | None = None
