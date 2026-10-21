@@ -64,7 +64,9 @@ shellcheck scripts/*.sh
 3. **Toda ordem passa pelo `RiskManager`** via `OrderService`. Não crie caminhos que chamem
    `BinanceFuturesClient.place_order` diretamente fora de `LiveExecutor`/`kill_switch.py`.
 4. **Testes nunca acessam a Binance de verdade.** Use `httpx.MockTransport` no `BinanceFuturesClient`
-   (parâmetro `transport=`), `StaticMarketData` ou monkeypatch. Nenhum teste envia ordens.
+   (parâmetro `transport=`), `StaticMarketData` ou monkeypatch. Nenhum teste envia ordens. O mesmo vale para
+   alertas: provedores de WhatsApp são testados com `httpx.MockTransport` (`build_notifier(..., transport=)`);
+   nenhum teste envia mensagens reais.
 5. Os testes usam **SQLite** temporário criado com `Base.metadata.create_all` (`tests/conftest.py`), Redis
    inacessível de propósito e `CELERY_DISPATCH_ENABLED=false`. Modelos devem continuar compatíveis com SQLite;
    recursos exclusivos do PostgreSQL (triggers, extensões, hypertables) vão **apenas** em migrações Alembic,

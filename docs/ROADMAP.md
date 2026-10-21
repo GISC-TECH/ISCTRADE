@@ -42,15 +42,22 @@
 - [ ] Kill switch testado em produção (simulação controlada)
 - [ ] Runbook de incidentes completo (rascunho em SECURITY.md)
 
-## Fase 4 — Monitoramento e logs
+## Fase 4 — Monitoramento e logs ✅ (etapa concluída no código)
 - [x] Trilha de auditoria por workspace e global
 - [x] Dashboards de equity (snapshots periódicos)
 - [x] Health checks em todos os serviços Docker
 - [x] Script de backup do PostgreSQL com retenção (e backup automático antes de cada deploy)
-- [ ] Logs estruturados (JSON) e trilha de auditoria imutável (append-only/assinada)
-- [ ] Alertas (Telegram/e-mail) para erros, kill switch e divergências
-- [ ] Métricas (Prometheus/Grafana)
-- [ ] Teste periódico de restauração de backup
+- [x] Logs estruturados (JSON) com `request_id`/`task_id` e mascaramento de segredos
+- [x] `/health` (liveness) e `/health/ready` (PostgreSQL, Redis, broker Celery e heartbeat dos streams)
+- [x] Métricas Prometheus (`/metrics` interno/token) + Prometheus/Grafana opcionais (perfil `monitoring`)
+- [x] Alertas via **WhatsApp** (WAGO por padrão; wago-api, Meta Cloud API, Evolution e HTTP genérico) para
+  kill switch, limites de risco, ordens rejeitadas/executadas, posições, erros de bot, WebSocket, divergências,
+  falhas de tarefas e resumo diário — com histórico, antispam e configuração por workspace ([ALERTS.md](ALERTS.md))
+- [x] Tela **Monitoramento** (saúde, alertas recentes, configurações e alerta de teste)
+- [ ] Canais adicionais (Telegram/e-mail) sobre a mesma interface `Notifier`
+- [ ] Trilha de auditoria imutável (assinada/WORM)
+- [ ] Regras de alerta no Prometheus/Alertmanager (hoje os alertas saem do próprio backend)
+- [ ] Teste periódico de restauração de backup *(operacional)*
 
 ## Fase 5 — Escala de capital
 - [x] Múltiplas contas/workspaces com limites de risco por conta

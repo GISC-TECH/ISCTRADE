@@ -156,10 +156,11 @@ prompt próprio: [Etapa 7](#etapa-7-opcional--timescaledb).
 | **Núcleo de trading + RiskManager** | `backend/app/services/risk_manager.py` (6 regras: kill switch por drawdown, perda diária, stop obrigatório, alavancagem, risco por trade, margem), `execution.py` (`OrderService`, `PaperExecutor`, `LiveExecutor`), `position_math.py`, `symbol_filters.py`, `kill_switch.py`, `bot_runner.py`, `backend/app/strategy/` (`grid`, `ema_cross`, `rsi_bollinger`, `indicators.py`, `state_machine.py`) |
 | **Backtest** | `backend/app/backtest/engine.py` (`BacktestEngine`, taxas, slippage, stops com gap, métricas), `backend/app/backtest/data.py`, rota `POST /api/v1/strategies/backtest`, `tests/test_backtest.py` |
 | **Integração Binance** | `backend/app/services/binance_client.py` (`BinanceFuturesClient`, REST assinado), `binance_ws.py` (`MarketStream`, `UserDataStream`), `reconciler.py` (`Reconciler`), `prices.py`, `backend/app/workers/streams.py` (`StreamSupervisor`) |
-| **Tarefas Celery** | `backend/app/tasks/celery_app.py` (beat: `tick-bots`, `reconcile-accounts`, `equity-snapshots`, `daily-risk-reset`), `backend/app/tasks/bot_tasks.py`, `backend/app/services/jobs.py`, `backend/app/services/dispatch.py` |
+| **Tarefas Celery** | `backend/app/tasks/celery_app.py` (beat: `tick-bots`, `reconcile-accounts`, `equity-snapshots`, `daily-risk-reset`, `alerts-daily-summary`), `backend/app/tasks/bot_tasks.py`, `backend/app/services/jobs.py`, `backend/app/services/dispatch.py` |
 | **API** | `backend/app/api/v1/endpoints/` (`auth`, `workspaces`, `accounts`, `bots`, `strategies`, `history`, `admin`), `backend/app/api/deps.py`, `backend/app/schemas/`, `tests/test_api_e2e.py` |
 | **Dashboard (frontend)** | `frontend/app/dashboard/` (visão geral, `accounts`, `bots`, `strategies`, `history`, `workspaces`, `profile`), `frontend/app/admin/page.tsx`, `frontend/lib/api.ts`, `frontend/middleware.ts`, `frontend/components/` |
-| **Ops** | `docker-compose.yml`, `docker-compose.prod.yml`, `Caddyfile`, `scripts/deploy.sh`, `scripts/backup_db.sh`, `docs/ci/ci.yml` |
+| **Monitoramento e alertas (Etapa 1 ✅)** | `backend/app/core/logging.py` (logs JSON + `request_id`), `core/redaction.py`, `core/middleware.py`, `core/metrics.py` (Prometheus), `services/health.py` (`/health/ready`), `tasks/signals.py`, `services/alerts/` (eventos, `Notifier`, provedores WhatsApp `wago`/`wago_api`/`meta_cloud`/`evolution`/`generic_http`, antispam, entrega), `tasks/alert_tasks.py`, `api/v1/endpoints/alerts.py` e `monitoring.py`, migração `0002_alerts.py`, `frontend/app/dashboard/monitoring/page.tsx`, `infra/monitoring/` (Prometheus + Grafana), `docs/ALERTS.md`, testes `test_observability.py` e `test_alerts.py` |
+| **Ops** | `docker-compose.yml` (perfil `monitoring`), `docker-compose.prod.yml`, `Caddyfile`, `scripts/deploy.sh`, `scripts/backup_db.sh`, `docs/ci/ci.yml` |
 
 ---
 
@@ -168,9 +169,9 @@ prompt próprio: [Etapa 7](#etapa-7-opcional--timescaledb).
 | # | Etapa | Já existe | Falta |
 |---|---|---|---|
 | 0 | **Ativar CI** | Workflow completo em `docs/ci/ci.yml` | Mover para `.github/workflows/ci.yml` com um token/conta com escopo `workflow`; exigir CI verde na proteção da branch `main` |
-| 1 | **Monitoramento e logs** | `GET /health` (estático), healthchecks no compose, logs em texto via `logging` | Logs JSON estruturados, `GET /health/ready` (checa DB e Redis), métricas Prometheus (`/metrics`), Grafana opcional |
+| 1 | **Monitoramento e logs** ✅ | **Concluída**: logs JSON com `request_id`/`task_id`, `/health/ready`, `/metrics` (interno/token), Prometheus + Grafana (perfil `monitoring`), alertas via **WhatsApp** com histórico e tela Monitoramento | — (melhorias futuras: regras no Alertmanager) |
 | 2 | **Auditoria à prova de adulteração** | `audit_logs` + `log_event` com mascaramento, telas de auditoria (workspace e admin) | Encadeamento por hash (`prev_hash`/`hash`), bloqueio de UPDATE/DELETE no PostgreSQL, verificação da cadeia |
-| 3 | **Alertas no Telegram** | Nada | Serviço de notificação, envio assíncrono via Celery, alertas de kill switch, erro de bot, reconciliação e perda diária |
+| 3 | **Alertas no Telegram** | Pipeline completo de alertas (`app/services/alerts/`, interface `Notifier`, entrega via Celery, antispam, histórico, configurações por workspace) com canal WhatsApp | Implementar `TelegramNotifier` (e opcionalmente e-mail) sobre a mesma interface e permitir escolher canais por workspace |
 | 4 | **Kill switch (completar)** | Kill switch por conta (drawdown no `RiskManager`, `trigger_account_kill_switch`), reset via `POST /accounts/{id}/reset-kill-switch` e UI, kill switch global via `POST /admin/kill-switch` e painel Admin | Acionamento **manual** por conta (endpoint + botão "parar tudo e fechar posições"), comando `/kill` pelo Telegram, teste controlado em produção |
 | 5 | **Multi-conta / workspaces (completar)** | Workspaces, membros, papéis, limites de risco **por conta** | Limites **agregados** por workspace (exposição total, perda diária somada), visão consolidada das contas |
 | 6 | **Dashboard: PnL, posições e scanner** | Dashboard por conta (equity, PnL do dia, posições, curva) | PnL por período (dia/semana/mês) e por bot/símbolo, posições de todas as contas, **scanner de mercado** (variação 24h, volume, funding) |
@@ -181,7 +182,7 @@ prompt próprio: [Etapa 7](#etapa-7-opcional--timescaledb).
 Outros pendentes do `docs/ROADMAP.md` que podem virar etapas extras: custos de *funding* e walk-forward no
 backtest, 2FA (TOTP), rotação automática da `MASTER_ENCRYPTION_KEY`.
 
-**Ordem recomendada:** 0 → 1 → 2 → 3 → 4 → 5 → 6 → (7) → 8 → 9. Live (9) só depois de 8 aprovada.
+**Ordem recomendada:** 0 → ~~1~~ → 2 → 3 → 4 → 5 → 6 → (7) → 8 → 9. Live (9) só depois de 8 aprovada.
 
 ---
 
@@ -237,23 +238,20 @@ Comandos que devem passar: cd backend && ruff check . && ruff format --check . &
 Branch: feat/ci-activation. Commit: "docs(ci): finalize CI activation". Abra um PR para main.
 ```
 
-#### Etapa 1 — Monitoramento e logs
+#### Etapa 1 — Monitoramento e logs ✅ concluída
 
-```text
-Leia AGENTS.md. Tarefa: monitoramento e logs estruturados no backend do ISCTRADE.
-Implemente:
-1. backend/app/core/logging.py: configure_logging() com saída JSON em uma linha (campos: timestamp ISO UTC, level, logger, message, e extras como request_id, workspace_id, account_id, bot_id quando existirem). Use apenas a biblioteca padrão (logging + json) ou adicione python-json-logger em backend/requirements.txt com versão fixa. Nova config LOG_FORMAT ("json"|"text", default "json") e LOG_LEVEL (default "INFO") em backend/app/core/config.py e .env.example.
-2. Chame configure_logging() em backend/app/main.py, backend/app/tasks/celery_app.py (sinal setup_logging do Celery) e backend/app/workers/streams.py (substituindo o logging.basicConfig atual).
-3. Middleware em backend/app/main.py que gera/propaga X-Request-ID e registra método, rota, status e duração.
-4. GET /health/ready em backend/app/main.py: verifica SELECT 1 no banco e PING no Redis; 200 com {"database":"ok","redis":"ok"} ou 503 indicando o que falhou. Mantenha GET /health como está (liveness).
-5. Métricas Prometheus: adicione prometheus-client (versão fixa) e exponha GET /metrics com: contador de requisições HTTP por rota/status, histograma de latência, contador de ordens por resultado (aceita/rejeitada pelo risco, paper/live) incrementado em backend/app/services/execution.py (OrderService), contador de ticks de bot por resultado em backend/app/services/jobs.py, gauge de contas por status. Proteja /metrics: só responde se METRICS_ENABLED=true (default false) e, no Caddyfile, NÃO exponha /metrics publicamente.
-6. Opcional: perfil "monitoring" no docker-compose.yml com prometheus e grafana (portas só em 127.0.0.1), arquivo infra/prometheus.yml raspando backend:8000/metrics.
-7. Documente em README.md e docs/ARCHITECTURE.md.
-Testes (backend/tests/test_observability.py): formato JSON do log (parse com json.loads), X-Request-ID ecoado na resposta, /health/ready retorna 503 com Redis inacessível (os testes já usam REDIS_URL inacessível) e 200 quando monkeypatchado, /metrics 404 quando desabilitado e contém os nomes das métricas quando habilitado, contador de ordens incrementa ao executar uma ordem paper.
-Nunca registre segredos em log.
-Comandos que devem passar: cd backend && ruff check . && ruff format --check . && pytest -q; se mexer no compose: cp .env.example .env && docker compose config -q.
-Branch: feat/observability. Commits em Conventional Commits. Abra PR para main.
-```
+Implementada no código (não é preciso delegar). Resumo para agentes que forem mexer nessa área:
+
+- Logs: `configure_logging()` (`app/core/logging.py`) é chamado na API, no Celery (sinal `setup_logging`) e no
+  worker `streams`. Use `logger.info("mensagem", extra={...})` — os extras viram campos JSON e passam pelo
+  mascaramento de segredos.
+- Métricas: declare novas métricas em `app/core/metrics.py` (labels de cardinalidade limitada — nada de IDs em
+  contadores) e incremente com `safe_inc`. Gauges vindos do banco ficam em `DatabaseCollector` +
+  `services/metrics_snapshot.py`.
+- Alertas: para alertar sobre algo novo, registre o evento em `services/alerts/events.py`, mapeie o evento de
+  auditoria em `alert_from_audit` (`services/alerts/service.py`) **ou** chame `emit_alert(...)` fora de transações.
+  Nunca envie mensagens de forma síncrona no caminho de trading. Testes com `httpx.MockTransport` — nunca a API real.
+- Documentação do usuário: `docs/ALERTS.md`.
 
 #### Etapa 2 — Auditoria à prova de adulteração
 
@@ -264,7 +262,7 @@ Implemente:
 1. Colunas novas em AuditLog: seq (inteiro crescente, único), prev_hash (String(64)) e hash (String(64)), compatíveis com SQLite.
 2. Em log_event: hash = sha256 de JSON canônico (sort_keys, separators compactos) contendo seq, created_at ISO, event, level, user_id, workspace_id, account_id, ip_address, data já sanitizado e prev_hash. prev_hash = hash do registro anterior (cadeia global) ou "0"*64 no primeiro. Serialize o acesso ao último registro (no PostgreSQL use pg_advisory_xact_lock; no SQLite não é necessário) para não bifurcar a cadeia.
 3. backend/app/services/audit.py: verify_chain(db, limit=None) -> resultado com ok, total verificado e o primeiro seq inválido.
-4. Migração backend/alembic/versions/0002_audit_hash_chain.py (revision "0002", down_revision "0001"): adiciona as colunas; preenche seq/prev_hash/hash dos registros existentes em ordem de created_at,id; índice único em seq; SOMENTE no PostgreSQL cria trigger que impede UPDATE e DELETE em audit_logs (RAISE EXCEPTION). downgrade remove trigger e colunas. Atenção: a FK workspace_id usa ondelete CASCADE — documente que excluir um workspace passará a falhar com o trigger, e troque a FK para SET NULL na migração (com downgrade revertendo).
+4. Migração backend/alembic/versions/0003_audit_hash_chain.py (revision "0003", down_revision "0002"): adiciona as colunas; preenche seq/prev_hash/hash dos registros existentes em ordem de created_at,id; índice único em seq; SOMENTE no PostgreSQL cria trigger que impede UPDATE e DELETE em audit_logs (RAISE EXCEPTION). downgrade remove trigger e colunas. Atenção: a FK workspace_id usa ondelete CASCADE — documente que excluir um workspace passará a falhar com o trigger, e troque a FK para SET NULL na migração (com downgrade revertendo).
 5. Endpoint GET /api/v1/admin/audit/verify (super-admin) retornando o resultado de verify_chain; botão "Verificar integridade" na aba de auditoria de frontend/app/admin/page.tsx (via frontend/lib/api.ts e tipos em frontend/lib/types.ts).
 6. Atualize docs/SECURITY.md (remova a limitação "não é imutável" e descreva o mecanismo e seus limites: quem tem acesso de superusuário ao banco ainda pode recriar a cadeia; recomende exportar o último hash periodicamente).
 Testes: backend/tests/test_audit.py — cadeia válida após vários log_event; alterar data de um registro diretamente no banco faz verify_chain apontar o seq; o endpoint verify exige super-admin; test_migrations.py continua passando (upgrade/downgrade/check) com TEST_POSTGRES_URL.
@@ -272,17 +270,18 @@ Comandos que devem passar: cd backend && ruff check . && ruff format --check . &
 Branch: feat/audit-hash-chain. Abra PR para main.
 ```
 
-#### Etapa 3 — Alertas no Telegram
+#### Etapa 3 — Alertas no Telegram (novo canal)
 
 ```text
-Leia AGENTS.md. Tarefa: alertas no Telegram para o ISCTRADE.
+Leia AGENTS.md e docs/ALERTS.md. Tarefa: adicionar o Telegram como segundo canal do pipeline de alertas existente do ISCTRADE.
+Contexto: backend/app/services/alerts/ já tem eventos, severidades, antispam, histórico (tabela alerts), entrega via Celery (alerts.process/alerts.deliver com retries) e a interface Notifier (notifier.py) implementada pelos provedores de WhatsApp (whatsapp.py, build_notifier). Hoje deliver_alert usa um único notifier e destinatários = números de WhatsApp.
 Implemente:
-1. Configs em backend/app/core/config.py e .env.example (placeholders, nunca valores reais): TELEGRAM_ENABLED (default false), TELEGRAM_BOT_TOKEN (default vazio), TELEGRAM_CHAT_ID (default vazio), TELEGRAM_MIN_LEVEL ("info"|"warning"|"critical", default "warning").
-2. backend/app/services/notifications.py: notify(event, level, text, **context) que, se habilitado, enfileira a task Celery "notify.telegram" via backend/app/services/dispatch.py (enqueue). A task (em backend/app/tasks/bot_tasks.py ou novo backend/app/tasks/notify_tasks.py incluído em celery_app.py) usa httpx para POST https://api.telegram.org/bot<TOKEN>/sendMessage, com timeout, retry exponencial (max 3) e sem registrar o token em log. Deduplicação: não repetir o mesmo (event, account_id) em 5 minutos (chave no Redis com fallback em memória).
-3. Disparos: kill switch de conta acionado (backend/app/services/kill_switch.py, trigger_account_kill_switch) — critical; kill switch global ligado/desligado (set_global_kill_switch) — critical; bot entrou em estado error (backend/app/services/bot_runner.py / jobs.py) — warning; ordem rejeitada por perda diária ou drawdown (RiskManager via OrderService) — warning; falha de reconciliação (backend/app/services/reconciler.py / jobs.reconcile_account) — warning; primeira ordem LIVE do dia de uma conta — info.
-4. Mensagens em português, sem dados sensíveis (sem chaves, sem e-mail completo), incluindo workspace, conta (label), símbolo e motivo.
-5. Página/seção opcional em frontend/app/dashboard/profile/page.tsx ou admin mostrando se o Telegram está configurado (sem exibir token) e botão "Enviar teste" (POST /api/v1/admin/notifications/test, super-admin).
-Testes (backend/tests/test_notifications.py): com TELEGRAM_ENABLED=false nada é enviado; task chama a URL correta usando httpx.MockTransport (nunca a API real); deduplicação funciona; kill switch de conta chama notify com level critical (monkeypatch); o token não aparece em logs (caplog).
+1. Configs em backend/app/core/config.py e .env.example (placeholders): TELEGRAM_ENABLED (default false), TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (padrão do servidor).
+2. backend/app/services/alerts/telegram.py: TelegramNotifier (channel="telegram") fazendo POST https://api.telegram.org/bot<TOKEN>/sendMessage com chat_id e text (converta o *negrito* do WhatsApp para HTML ou envie texto puro); o token nunca pode aparecer em logs, erros ou no histórico (a URL contém o token: trate exceções sem repassar a URL).
+3. Suporte a múltiplos canais: build_notifiers() retornando os canais configurados; deliver_alert entrega em cada canal (status por canal em data, status geral sent/partial/failed). AlertSettings ganha telegram_chat_ids (JSON) com migração 0003 (ou a próxima livre) — testada com upgrade/downgrade/check.
+4. Endpoints existentes (/api/v1/alerts/settings, /alerts/test) passam a aceitar/mostrar os chats do Telegram; tela frontend/app/dashboard/monitoring/page.tsx com o campo novo.
+5. Atualize docs/ALERTS.md (seção Telegram com curl de teste) e README.
+Testes (backend/tests/test_alerts.py): URL e corpo corretos com httpx.MockTransport (nunca a API real), token ausente de mensagens de erro e do histórico, entrega em dois canais com falha parcial, migração.
 Comandos que devem passar: cd backend && ruff check . && ruff format --check . && pytest -q; frontend: npm run lint && npx tsc --noEmit && npm run build.
 Branch: feat/telegram-alerts. Abra PR para main.
 ```
@@ -376,7 +375,7 @@ Contexto: LiveExecutor em backend/app/services/execution.py só é usado com LIV
 Implemente:
 1. Tetos rígidos de servidor (config + .env.example): LIVE_MAX_NOTIONAL_PER_ORDER_USDT (default 50), LIVE_MAX_TOTAL_NOTIONAL_USDT (default 200), LIVE_MAX_LEVERAGE (default 2), LIVE_MAX_RISK_PER_TRADE_PCT (default 0.5). Aplicados no OrderService SOMENTE para contas live, depois do RiskManager, rejeitando com motivo claro e auditoria. Não podem ser afrouxados pela API/UI, só por env.
 2. Checklist de pré-voo GET /api/v1/accounts/{id}/live-preflight: credenciais válidas e can_trade; conta NÃO testnet; paper do mesmo bot aprovado (se a etapa 8 existir); limites da conta <= tetos; kill switch global desligado; modo de posição one-way; alavancagem do símbolo <= teto. Se possível, consulte as restrições da chave na Binance (endpoint de API restrictions da Binance) para confirmar que saque está DESABILITADO — se não for possível com a API de futuros, exiba o item como "verificação manual obrigatória".
-3. Mudar uma conta para execution_mode=live (PATCH /api/v1/accounts/{id}) exige papel admin, preflight todo verde e campo de confirmação "confirm_live": "<label da conta>"; registra auditoria critical (e alerta Telegram se a etapa 3 existir).
+3. Mudar uma conta para execution_mode=live (PATCH /api/v1/accounts/{id}) exige papel admin, preflight todo verde e campo de confirmação "confirm_live": "<label da conta>"; registra auditoria critical (o alerta via WhatsApp já sai pelo pipeline de alertas; mapeie o novo evento em alert_from_audit).
 4. Frontend: em frontend/app/dashboard/accounts/page.tsx, assistente "Ativar modo real" mostrando o checklist, os tetos e exigindo digitar o nome da conta; badge vermelho "REAL" persistente no app-shell quando a conta ativa for live.
 5. docs/SECURITY.md: runbook de go-live (capital mínimo, chave sem saque e com whitelist de IP, primeira semana com 1 bot e 1 símbolo, revisão diária, critérios para aumentar capital).
 Testes (sempre com Binance mockada via httpx.MockTransport, sem nenhuma ordem real): tetos rejeitam ordens live acima do limite e não afetam paper; PATCH para live sem confirmação/preflight falha; com tudo ok passa e audita; LIVE_TRADING_ENABLED=false continua forçando paper.
@@ -391,7 +390,7 @@ Depois do merge: só então, conscientemente, defina `LIVE_TRADING_ENABLED=true`
 
 ## 5. Regras de segurança
 
-1. **Nunca commite segredos**: tokens do GitHub, chaves da Binance, token do Telegram, chaves de API de LLM,
+1. **Nunca commite segredos**: tokens do GitHub, chaves da Binance, tokens do WhatsApp (WAGO etc.) e do Telegram, chaves de API de LLM,
    senhas, `.env`. Use variáveis de ambiente / `.env` (ignorado pelo git) e mantenha só placeholders
    (`CHANGE_ME_...`) no `.env.example`. Não cole segredos em prompts de agentes nem em issues/PRs.
 2. **Chaves da Binance**: crie chaves dedicadas com **leitura + trading de futuros** apenas, **sem permissão de
@@ -402,7 +401,7 @@ Depois do merge: só então, conscientemente, defina `LIVE_TRADING_ENABLED=true`
 5. **Push/merge na `main` só com testes passando** (CI verde) e após revisão humana do diff. Nada de force-push.
 6. **Revise os diffs dos agentes** com o checklist da seção 4.1, com atenção a: segredos, mudanças em
    `risk_manager.py`, `execution.py`, `kill_switch.py`, `config.py`, migrações e permissões de rotas.
-7. **Vazou um segredo?** Revogue/rotacione **imediatamente** na origem (Binance, GitHub, Telegram, provedor de LLM),
+7. **Vazou um segredo?** Revogue/rotacione **imediatamente** na origem (Binance, GitHub, WhatsApp/WAGO, Telegram, provedor de LLM),
    depois troque no `.env` e reinicie os serviços. Remover do histórico do git não basta — considere-o comprometido.
    Para `JWT_SECRET`/`MASTER_ENCRYPTION_KEY`, siga `docs/SECURITY.md`.
 8. **Limites para capital real**: comece com um valor que você aceita perder por inteiro, alavancagem ≤ 2x,

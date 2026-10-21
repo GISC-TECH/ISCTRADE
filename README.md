@@ -27,6 +27,8 @@ Plataforma **self-hosted** para automação e monitoramento de operações em **
 - **Integração Binance**: cliente REST assinado, WebSockets (user data + mark price) com reconexão, reconciliador de ordens/posições.
 - **Dashboard**: patrimônio, PnL, posições, curva de equity, histórico de ordens/execuções/auditoria.
 - **Admin**: estatísticas globais, usuários, workspaces, auditoria global e **kill switch global**.
+- **Monitoramento**: logs JSON com `request_id`, `/health/ready`, métricas Prometheus (`/metrics`, só rede interna), Prometheus + Grafana opcionais e tela **Monitoramento** (saúde, alertas, configurações).
+- **Alertas via WhatsApp**: WAGO (padrão), wago-api self-hosted, Meta Cloud API, Evolution API ou gateway HTTP genérico; kill switch, limites de risco, ordens, posições, erros, WebSocket, divergências, falhas de tarefas e resumo diário de PnL — veja [docs/ALERTS.md](docs/ALERTS.md).
 
 ## Stack
 
@@ -62,7 +64,7 @@ docs/ci/            workflow de CI do GitHub Actions (lint + testes + build) —
 1. **Backtest** — validar estratégias com dados históricos (klines) e custos realistas.
 2. **Dry-run / paper trading** — rodar em tempo real na Testnet ou em modo simulado, sem capital real.
 3. **Conta real mínima** — capital pequeno, alavancagem baixa, limites de risco conservadores.
-4. **Monitoramento e logs** — alertas, auditoria, reconciliação, métricas e dashboards.
+4. **Monitoramento e logs** ✅ — logs JSON, `/health/ready`, métricas Prometheus/Grafana, auditoria e alertas via WhatsApp ([docs/ALERTS.md](docs/ALERTS.md)).
 5. **Escala de capital** — aumento gradual, somente após métricas estáveis nas fases anteriores.
 
 Detalhes e checklists em [`docs/ROADMAP.md`](docs/ROADMAP.md).
@@ -85,11 +87,14 @@ docker compose up -d --build
 docker compose ps        # aguarde backend/frontend/celery_worker "healthy"
 ```
 
-Serviços: `caddy`, `frontend`, `migrate` (executa `alembic upgrade head` e encerra), `backend`, `celery_worker`, `celery_beat`, `streams`, `postgres`, `redis`.
+Serviços: `caddy`, `frontend`, `migrate` (executa `alembic upgrade head` e encerra), `backend`, `celery_worker`, `celery_beat`, `streams`, `postgres`, `redis` (+ `prometheus` e `grafana` no perfil opcional `monitoring`).
 
 - Aplicação: https://localhost (Caddy, certificado local) — ou http://localhost:3000 direto no Next.js
 - API: https://localhost/api/v1 — documentação interativa em http://localhost:8000/docs (desabilitada em produção)
-- Health check: http://localhost:8000/health
+- Health check: http://localhost:8000/health · prontidão (DB/Redis/broker/streams): http://localhost:8000/health/ready
+- Métricas: http://localhost:8000/metrics (não exposto pelo Caddy). Prometheus/Grafana opcionais:
+  `docker compose --profile monitoring up -d` → http://localhost:9090 e http://localhost:3001 (defina `GRAFANA_ADMIN_PASSWORD` no `.env`)
+- Alertas via WhatsApp: preencha `WHATSAPP_*` no `.env` (ex.: `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER=wago`, `WHATSAPP_API_TOKEN`, `WHATSAPP_TO`) — passo a passo em [docs/ALERTS.md](docs/ALERTS.md)
 
 Acesse `/auth/register` e crie o primeiro usuário (vira super-admin). Depois, em **Contas**, conecte uma conta (Testnet + paper por padrão) e crie bots em **Bots**. Depois de criar os usuários necessários, defina `ALLOW_REGISTRATION=false`.
 
@@ -145,7 +150,7 @@ O workflow em [`docs/ci/ci.yml`](docs/ci/ci.yml) (mova para `.github/workflows/`
 
 ## Documentação
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/ALERTS.md`](docs/ALERTS.md) (alertas via WhatsApp)
 - [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) — guia para usar agentes de IA (Claude Code, Cursor, Copilot, Aider) e prompts para as etapas restantes; regras em [`AGENTS.md`](AGENTS.md)
 
 ## Segurança

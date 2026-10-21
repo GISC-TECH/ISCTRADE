@@ -6,7 +6,7 @@
                        ┌──────────────────────────────┐
      Navegador ──────▶ │        Caddy (HTTPS/TLS)      │
                        └──────────────┬───────────────┘
-                     /*               │              /api/*, /health
+                     /*               │        /api/*, /health, /health/*  (/metrics → 404)
               ┌───────────────────────┴────────────────────────┐
               ▼                                                ▼
    ┌─────────────────────┐   HTTP (cookie httpOnly)   ┌─────────────────────┐
@@ -37,13 +37,14 @@
 
 | Componente | Responsabilidade |
 |---|---|
-| **Caddy** | Terminação TLS, headers de segurança, roteamento `/api`, `/health` → backend e `/` → frontend. |
+| **Caddy** | Terminação TLS, headers de segurança, roteamento `/api`, `/health`, `/health/*` → backend e `/` → frontend. `/metrics` responde 404 (métricas só na rede interna). |
 | **Next.js** (`frontend`) | UI: autenticação, dashboard (saldo, PnL, posições, curva de patrimônio), contas, bots, backtest, histórico, workspaces, perfil e admin. Fala com a API só via `lib/api.ts` (cookies + header `X-Workspace-ID`). |
 | **FastAPI** (`backend`) | Autenticação (JWT em cookie httpOnly com revogação por `token_version`), RBAC, workspaces, contas, bots, backtest, histórico, admin, rate limiting. |
 | **migrate** | Serviço one-shot (`alembic upgrade head`) executado antes de API e workers. |
-| **celery_worker** | Tarefas: tick dos bots, start/stop de contas, reconciliação, snapshots de equity, reset diário. |
-| **celery_beat** | Agendador (uma única instância): `tick-bots` (30 s), `reconcile-accounts` (60 s), `equity-snapshots` (5 min), `daily-risk-reset` (00:00 UTC). |
-| **streams** | Processo assíncrono com WebSockets da Binance (user data stream com keepalive do listenKey e mark price), alimentando o `Reconciler` e o cache de preços. |
+| **celery_worker** | Tarefas: tick dos bots, start/stop de contas, reconciliação, snapshots de equity, reset diário e entrega de alertas (`alerts.process`/`alerts.deliver`, com retries). Métricas na porta interna 9101 (modo multiprocess). |
+| **celery_beat** | Agendador (uma única instância): `tick-bots` (30 s), `reconcile-accounts` (60 s), `equity-snapshots` (5 min), `daily-risk-reset` (00:00 UTC), `alerts-daily-summary` (`ALERT_DAILY_SUMMARY_HOUR_UTC`:05). |
+| **streams** | Processo assíncrono com WebSockets da Binance (user data stream com keepalive do listenKey e mark price), alimentando o `Reconciler` e o cache de preços. Grava um heartbeat no Redis (`streams:heartbeat`) e alerta quando um WebSocket fica fora por mais de `ALERT_WS_DISCONNECT_SECONDS`. Métricas na porta interna 9102. |
+| **prometheus / grafana** | Opcionais (`docker compose --profile monitoring up -d`), portas só em `127.0.0.1` (9090 e 3001). Dashboard provisionado em `infra/monitoring/grafana/dashboards`. |
 | **Redis** | Broker do Celery, cache de preços, rate limiting, locks distribuídos por conta/bot. |
 | **PostgreSQL** | Persistência (usuários, workspaces, contas com chaves criptografadas, bots, ordens, execuções, posições, equity, backtests, auditoria). |
 | **Binance** | REST assinado (HMAC-SHA256) para ordens/conta; WebSocket para mercado e user data stream. |
@@ -64,3 +65,20 @@
 - `User` ⟶ possui/participa de `Workspace` (via `WorkspaceMember`, com papel).
 - `Workspace` ⟶ possui `Account`s. Toda consulta de conta é filtrada por `workspace_id` do workspace ativo (header `X-Workspace-ID`, validado contra a associação do usuário).
 - As credenciais são criptografadas com AES-256-GCM usando o `workspace_id` como *associated data*, impedindo reaproveitamento do ciphertext entre tenants.
+
+## Observabilidade
+
+- **Logs**: JSON por linha (`LOG_FORMAT=json`) com `timestamp`, `level`, `logger`, `message`, `request_id`
+  (header `X-Request-ID`, propagado às tasks Celery), `task_id`/`task_name` e campos extras. Segredos são
+  mascarados (`app/core/redaction.py`) nos logs, na auditoria e nos alertas.
+- **Health**: `GET /health` (liveness) e `GET /health/ready` — PostgreSQL, Redis e broker são críticos (503 quando
+  falham); o heartbeat do worker `streams` apenas marca o estado como `degraded`.
+- **Métricas** (`app/core/metrics.py`): HTTP (`btp_http_requests_total`, `btp_http_request_duration_seconds`),
+  ordens (`btp_orders_total{mode,result,reason}`), ticks de bot, drift do reconciliador, reconexões e estado dos
+  WebSockets, tarefas Celery (contagem e duração), alertas e, calculadas no scrape a partir do banco, bots por
+  estado, contas por status, equity / PnL do dia / drawdown / posições por conta, kill switch global e idade do
+  heartbeat dos streams. `/metrics` só é acessível pela rede interna (o Caddy devolve 404) e pode exigir
+  `METRICS_TOKEN` (Bearer). Com vários processos (uvicorn `--workers`, Celery) usa `PROMETHEUS_MULTIPROC_DIR`.
+- **Alertas** (`app/services/alerts/`): eventos de auditoria viram alertas enfileirados na sessão e despachados
+  somente após o commit; a entrega é feita pelo Celery com antispam no Redis, histórico em `alerts` e
+  provedores de WhatsApp plugáveis (`Notifier`). Detalhes em [ALERTS.md](ALERTS.md).
