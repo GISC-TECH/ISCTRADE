@@ -11,6 +11,8 @@ EXPECTED_TABLES = {
     "alert_settings",
     "alerts",
     "market_scans",
+    "news_items",
+    "economic_events",
     "workspaces",
     "workspace_members",
     "accounts",

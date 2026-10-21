@@ -74,6 +74,46 @@ class Settings(BaseSettings):
     SCANNER_MIN_QUOTE_VOLUME: float = 50_000_000.0  # 24h volume in USDT
     SCANNER_KLINES_CACHE_SECONDS: int = 120
     SCANNER_KEEP_SNAPSHOTS: int = 48
+    # News & sentiment (a FILTER for entries, never a trade trigger)
+    NEWS_ENABLED: bool = True
+    NEWS_REFRESH_SECONDS: int = 300
+    NEWS_RETENTION_DAYS: int = 14
+    NEWS_HTTP_TIMEOUT_SECONDS: float = 10.0
+    NEWS_RSS_FEEDS: Annotated[list[str], NoDecode] = [
+        "https://www.coindesk.com/arc/outboundfeeds/rss/",
+        "https://cointelegraph.com/rss",
+        "https://decrypt.co/feed",
+        "https://www.theblock.co/rss.xml",
+    ]
+    NEWS_MAX_ITEMS_PER_SOURCE: int = 50
+    NEWS_SENTIMENT_HALF_LIFE_HOURS: float = 6.0
+    NEWS_SENTIMENT_WINDOW_HOURS: float = 48.0
+    NEWS_ALERT_MIN_ABS_SENTIMENT: float = 0.5  # high-impact news alerts need |sentiment| >= this
+    CRYPTOPANIC_API_TOKEN: str = ""  # optional (paid plans); empty = disabled
+    CRYPTOPANIC_API_URL: str = "https://cryptopanic.com/api/growth/v2/posts/"
+    CRYPTOPANIC_MIN_INTERVAL_SECONDS: int = 900  # respect the monthly quota
+    X_BEARER_TOKEN: str = ""  # optional X API v2 recent search; empty = disabled
+    X_API_URL: str = "https://api.x.com/2/tweets/search/recent"
+    X_ACCOUNTS: Annotated[list[str], NoDecode] = []  # e.g. "whale_alert,WatcherGuru"
+    X_QUERIES: Annotated[list[str], NoDecode] = []  # e.g. "bitcoin ETF -is:retweet lang:en"
+    X_MAX_RESULTS: int = 20
+    X_MIN_INTERVAL_SECONDS: int = 900
+    # LLM sentiment (any OpenAI-compatible /chat/completions API). Empty key = lexicon fallback.
+    LLM_API_BASE: str = "https://api.openai.com/v1"
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = "gpt-4o-mini"
+    LLM_TIMEOUT_SECONDS: float = 20.0
+    LLM_MAX_CALLS_PER_HOUR: int = 60
+    LLM_MAX_ITEMS_PER_RUN: int = 20
+
+    # Economic calendar (pause new entries around high-impact macro events)
+    ECON_CALENDAR_ENABLED: bool = True
+    ECON_CALENDAR_URL: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    ECON_CALENDAR_REFRESH_SECONDS: int = 3600
+    ECON_CALENDAR_COUNTRIES: Annotated[list[str], NoDecode] = ["USD"]
+    ECON_CALENDAR_MANUAL_EVENTS: str = ""  # JSON list: [{"title","time"(ISO),"country","impact"}]
+    ECON_ALERT_LEAD_MINUTES: int = 60
+
     RECONCILE_SECONDS: int = 60
     EQUITY_SNAPSHOT_SECONDS: int = 300
 
@@ -111,7 +151,15 @@ class Settings(BaseSettings):
     RISK_MAX_DAILY_LOSS_PCT: float = 3.0
     RISK_MAX_DRAWDOWN_PCT: float = 15.0
 
-    @field_validator("CORS_ORIGINS", "WHATSAPP_TO", mode="before")
+    @field_validator(
+        "CORS_ORIGINS",
+        "WHATSAPP_TO",
+        "NEWS_RSS_FEEDS",
+        "X_ACCOUNTS",
+        "X_QUERIES",
+        "ECON_CALENDAR_COUNTRIES",
+        mode="before",
+    )
     @classmethod
     def _split_origins(cls, v: object) -> object:
         if isinstance(v, str):

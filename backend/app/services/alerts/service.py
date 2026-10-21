@@ -194,6 +194,16 @@ def alert_from_audit(
             error=data.get("error"),
             **ctx,
         )
+    if event == "bot.event_pause":
+        return build_payload(
+            AlertEvent.BOT_EVENT_PAUSE,
+            dedup=f"evpause:{data.get('bot_id')}:{data.get('event_id')}",
+            bot=data.get("bot") or data.get("bot_id"),
+            economic_event=data.get("event_title"),
+            time=data.get("time"),
+            until=data.get("until"),
+            **ctx,
+        )
     if event == "reconcile.changes" and int(data.get("positions_changed") or 0) > 0:
         return build_payload(
             AlertEvent.RECONCILER_MISMATCH,

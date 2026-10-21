@@ -29,6 +29,9 @@ class AlertEvent(str, Enum):
     RECONCILER_MISMATCH = "reconciler_mismatch"
     TASK_FAILED = "task_failed"
     DAILY_SUMMARY = "daily_summary"
+    NEWS_HIGH_IMPACT = "news_high_impact"
+    ECONOMIC_EVENT = "economic_event"
+    BOT_EVENT_PAUSE = "bot_event_pause"
     TEST = "test"
 
 
@@ -53,6 +56,11 @@ EVENTS: dict[str, EventSpec] = {
     AlertEvent.RECONCILER_MISMATCH.value: EventSpec(Severity.WARNING, True, "Divergência na reconciliação"),
     AlertEvent.TASK_FAILED.value: EventSpec(Severity.WARNING, True, "Falha em tarefa Celery"),
     AlertEvent.DAILY_SUMMARY.value: EventSpec(Severity.INFO, True, "Resumo diário de PnL", throttled=False),
+    AlertEvent.NEWS_HIGH_IMPACT.value: EventSpec(
+        Severity.WARNING, True, "Notícia de alto impacto em ativo operado", throttled=False
+    ),
+    AlertEvent.ECONOMIC_EVENT.value: EventSpec(Severity.INFO, True, "Evento econômico de alto impacto em breve"),
+    AlertEvent.BOT_EVENT_PAUSE.value: EventSpec(Severity.INFO, True, "Bot pausou novas entradas (evento econômico)"),
     AlertEvent.TEST.value: EventSpec(Severity.INFO, True, "Alerta de teste", throttled=False),
 }
 

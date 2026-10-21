@@ -13,6 +13,7 @@ from app.models.enums import (
     OrderStatus,
     OrderType,
 )
+from app.models.news import EconomicEvent, NewsItem
 from app.models.scanner import MarketScan
 from app.models.system import SystemSetting
 from app.models.trading import EquitySnapshot, Order, Position, Trade
@@ -38,6 +39,8 @@ __all__ = [
     "EquitySnapshot",
     "AuditLog",
     "BacktestRun",
+    "NewsItem",
+    "EconomicEvent",
     "BacktestStatus",
     "SystemSetting",
     "AlertSettings",

@@ -39,6 +39,18 @@ FIELD_LABELS: dict[str, str] = {
     "actor": "Responsável",
     "trades": "Trades",
     "date": "Data",
+    "title": "Título",
+    "sentiment": "Sentimento (-1 a 1)",
+    "summary": "Resumo",
+    "source": "Fonte",
+    "economic_event": "Evento",
+    "country": "País/moeda",
+    "time": "Horário",
+    "minutes": "Em (min)",
+    "forecast": "Projeção",
+    "previous": "Anterior",
+    "until": "Pausado até",
+    "url": "Link",
 }
 
 REASONS_PT: dict[str, str] = {
