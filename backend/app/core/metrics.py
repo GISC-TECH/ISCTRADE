@@ -37,6 +37,12 @@ CELERY_TASK_DURATION = Histogram(
     ["task"],
     buckets=(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120),
 )
+BINANCE_USED_WEIGHT = Gauge(
+    "btp_binance_used_weight_1m",
+    "Binance IP request weight used in the current minute",
+    ["host"],
+    multiprocess_mode="max",
+)
 ALERTS = Counter("btp_alerts_total", "Alerts by event and delivery status", ["event", "status"])
 
 

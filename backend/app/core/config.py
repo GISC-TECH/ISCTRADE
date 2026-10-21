@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     BINANCE_TESTNET_WS_URL: str = "wss://stream.binancefuture.com"
     BINANCE_USE_TESTNET: bool = True
     BINANCE_RECV_WINDOW: int = 5000
+    # Request-weight guard (X-MBX-USED-WEIGHT-1M): above SOFT_PCT of the limit, non-order requests wait for the
+    # next minute (at most MAX_WAIT seconds, otherwise they fail fast); after a 429/418 requests pause locally.
+    BINANCE_WEIGHT_LIMIT_1M: int = 2400
+    BINANCE_WEIGHT_SOFT_PCT: float = 90.0
+    BINANCE_WEIGHT_MAX_WAIT_SECONDS: float = 15.0
 
     # CORS (comma-separated list)
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000"]

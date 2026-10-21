@@ -33,6 +33,9 @@ def check_production_settings() -> None:
 async def lifespan(_: FastAPI):
     check_production_settings()
     yield
+    from app.services.binance_http import close_shared_clients
+
+    await close_shared_clients()
     await close_redis()
 
 

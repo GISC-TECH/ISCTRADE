@@ -34,6 +34,16 @@ from app.core.database import AsyncSessionLocal, engine  # noqa: E402
 from app.models import Base  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _reset_binance_rate_limits():
+    """The weight guard is process-wide state: never leak a simulated 429/418 ban between tests."""
+    from app.services.binance_http import rate_limits
+
+    rate_limits.reset()
+    yield
+    rate_limits.reset()
+
+
 @pytest_asyncio.fixture
 async def db_schema():
     async with engine.begin() as conn:

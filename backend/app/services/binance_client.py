@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 import httpx
 
 from app.core.config import settings
+from app.services.binance_http import DEFAULT_TIMEOUT, rate_limits, shared_client
 from app.services.symbol_filters import SymbolFilters
 
 
@@ -49,7 +50,7 @@ class BinanceFuturesClient:
         api_secret: str,
         testnet: bool | None = None,
         recv_window: int | None = None,
-        timeout: float = 10.0,
+        timeout: float | httpx.Timeout | None = None,
         base_url: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -59,8 +60,19 @@ class BinanceFuturesClient:
         self._api_secret = api_secret.encode("utf-8")
         self.recv_window = recv_window or settings.BINANCE_RECV_WINDOW
         self.time_offset_ms = 0
-        headers = {"X-MBX-APIKEY": api_key} if api_key else {}
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout, headers=headers, transport=transport)
+        self._headers = {"X-MBX-APIKEY": api_key} if api_key else {}
+        self._timeout = DEFAULT_TIMEOUT if timeout is None else timeout
+        # A custom transport (tests) gets a private client; otherwise requests go through the pooled,
+        # keep-alive client of the running event loop (no TCP/TLS handshake per client instance).
+        self._own_client: httpx.AsyncClient | None = (
+            httpx.AsyncClient(base_url=self.base_url, timeout=self._timeout, transport=transport)
+            if transport is not None
+            else None
+        )
+
+    @property
+    def _client(self) -> httpx.AsyncClient:
+        return self._own_client if self._own_client is not None else shared_client(self.base_url)
 
     async def __aenter__(self) -> BinanceFuturesClient:
         return self
@@ -69,7 +81,8 @@ class BinanceFuturesClient:
         await self.close()
 
     async def close(self) -> None:
-        await self._client.aclose()
+        if self._own_client is not None:
+            await self._own_client.aclose()
 
     # ------------------------------------------------------------------ #
     def sign(self, params: dict[str, Any]) -> str:
@@ -89,11 +102,13 @@ class BinanceFuturesClient:
         if signed or api_key_only:
             if not self._api_key:
                 raise BinanceAPIError(401, None, "API key required")
+        await rate_limits.before_request(self.base_url, method, path)  # before signing: waits keep recvWindow valid
         if signed:
             params["timestamp"] = int(time.time() * 1000) + self.time_offset_ms
             params["recvWindow"] = self.recv_window
             params["signature"] = self.sign(params)
-        resp = await self._client.request(method, path, params=params)
+        resp = await self._client.request(method, path, params=params, headers=self._headers, timeout=self._timeout)
+        rate_limits.record(self.base_url, resp)
         if resp.status_code >= 400:
             try:
                 body = resp.json()
