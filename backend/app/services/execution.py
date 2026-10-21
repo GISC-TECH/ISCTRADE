@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Protocol
 
@@ -504,13 +504,14 @@ class OrderService:
                     db, account, bot, intent, symbol, Decimal("0"), leverage, "stop_loss_required"
                 )
             qty = self.rm.max_position_size(ref_price, intent.stop_loss, risk_state) * intent.risk_fraction
-        qty = filters.round_qty(abs(qty))
+        is_market = order_type != OrderType.LIMIT
+        qty = filters.round_qty(abs(qty), market=is_market)
         if qty <= 0:
             return await self._reject(db, account, bot, intent, symbol, qty, leverage, "size_zero_after_rounding")
         stop = filters.round_price(intent.stop_loss) if intent.stop_loss is not None else None
 
         risk_price = limit_price if order_type == OrderType.LIMIT and limit_price is not None else ref_price
-        problem = filters.check(qty, risk_price, intent.reduce_only)
+        problem = filters.check(qty, risk_price, intent.reduce_only, market=is_market)
         if problem:
             return await self._reject(db, account, bot, intent, symbol, qty, leverage, problem)
 
@@ -523,6 +524,10 @@ class OrderService:
             leverage=leverage,
             reduce_only=intent.reduce_only,
         )
+        if not intent.reduce_only:
+            used = await self._used_margin(db, account, symbol, intent.side)
+            if used:
+                risk_state = replace(risk_state, used_margin=risk_state.used_margin + used)
         decision = self.rm.evaluate(request, risk_state)
         if not decision.allowed:
             result = await self._reject(db, account, bot, intent, symbol, qty, leverage, decision.reason)
@@ -574,6 +579,19 @@ class OrderService:
         else:
             await self._reject(db, account, bot, intent, symbol, qty, leverage, result.reason)
         return result
+
+    @staticmethod
+    async def _used_margin(db: AsyncSession, account: Account, symbol: str, side: OrderSide) -> Decimal:
+        """Initial margin held by the account's open positions (a position this order reduces is not counted)."""
+        rows = await db.scalars(select(Position).where(Position.account_id == account.id, Position.quantity != 0))
+        used = Decimal("0")
+        for p in rows:
+            qty = Decimal(p.quantity)
+            if p.symbol == symbol and (qty > 0) != (side == OrderSide.BUY):
+                continue
+            price = Decimal(p.mark_price or p.entry_price or 0)
+            used += abs(qty) * price / Decimal(max(int(p.leverage or 1), 1))
+        return used
 
     async def _position_qty(self, db: AsyncSession, account: Account, symbol: str) -> Decimal | None:
         """Paper positions change synchronously; live ones are tracked by the reconciler/user stream."""

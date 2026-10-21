@@ -7,7 +7,7 @@ Rules (evaluated in this order):
   3. Mandatory stop loss   - every opening order needs a stop loss on the correct side of entry.
   4. Leverage limit        - leverage <= `max_leverage`.
   5. Max risk per trade    - qty * |entry - stop| <= equity * `max_risk_per_trade_pct` / 100.
-  6. Margin                - notional / leverage <= equity.
+  6. Margin                - notional / leverage + margin already used by open positions <= equity.
 Reduce-only orders (closing/de-risking) are always allowed, so positions can be closed
 even when the kill switch is active.
 """
@@ -44,6 +44,7 @@ class AccountRiskState:
     max_leverage: int = 5
     max_daily_loss_pct: Decimal = Decimal("3")
     max_drawdown_pct: Decimal = Decimal("15")
+    used_margin: Decimal = Decimal("0")  # initial margin of the open positions (notional / leverage)
 
 
 @dataclass(frozen=True)
@@ -117,8 +118,12 @@ class RiskManager:
             return RiskDecision(False, f"max_risk_per_trade: risk {risk:.2f} > allowed {max_risk:.2f} USDT")
 
         margin = order.quantity * order.entry_price / Decimal(order.leverage)
-        if margin > account.equity:
-            return RiskDecision(False, f"insufficient_margin: required {margin:.2f} > equity {account.equity:.2f} USDT")
+        if margin + account.used_margin > account.equity:
+            return RiskDecision(
+                False,
+                f"insufficient_margin: required {margin:.2f} + in use {account.used_margin:.2f}"
+                f" > equity {account.equity:.2f} USDT",
+            )
 
         return RiskDecision(True, self.OK)
 

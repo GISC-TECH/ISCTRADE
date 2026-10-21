@@ -34,11 +34,14 @@ class SymbolFilters:
         step = (self.market_step_size if market else None) or self.step_size
         return _round_step(Decimal(qty), step, ROUND_DOWN)
 
-    def check(self, qty: Decimal, price: Decimal, reduce_only: bool = False) -> str | None:
-        """Return a rejection reason or None if the order satisfies the filters."""
+    def check(self, qty: Decimal, price: Decimal, reduce_only: bool = False, market: bool = True) -> str | None:
+        """Return a rejection reason or None if the order satisfies the filters.
+
+        MARKET orders are bounded by MARKET_LOT_SIZE, LIMIT orders by LOT_SIZE (usually much larger).
+        """
         if qty < self.min_qty:
             return f"filter_min_qty: {qty} < {self.min_qty}"
-        max_qty = self.market_max_qty or self.max_qty
+        max_qty = (self.market_max_qty if market else None) or self.max_qty
         if qty > max_qty:
             return f"filter_max_qty: {qty} > {max_qty}"
         if not reduce_only and qty * price < self.min_notional:
