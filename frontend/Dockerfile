@@ -13,7 +13,10 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL=/api/v1
 # Destino dos rewrites /api/* do Next.js (gravado no build). Útil quando o frontend é acessado sem o Caddy.
 ARG BACKEND_INTERNAL_URL=http://backend:8000
+# WebSocket do painel em tempo real; vazio = mesma origem (/api/v1/ws via Caddy).
+ARG NEXT_PUBLIC_WS_URL=
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+    NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL} \
     BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL} \
     NEXT_TELEMETRY_DISABLED=1
 RUN npm run build

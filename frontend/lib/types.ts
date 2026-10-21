@@ -77,6 +77,7 @@ export interface PositionOut {
   unrealized_pnl: string;
   leverage: number;
   stop_loss: string | null;
+  take_profit?: string | null;
 }
 
 export interface AccountDashboard {
@@ -154,6 +155,7 @@ export interface Order {
   quantity: string;
   price: string | null;
   stop_loss: string | null;
+  take_profit?: string | null;
   leverage: number;
   reduce_only: boolean;
   executed_qty: string;
@@ -465,4 +467,45 @@ export interface ScannerResponse {
   weights: Record<string, number>;
   strategies: string[];
   results: ScannerRow[];
+}
+
+// Real-time panel / manual trading
+export interface Candle {
+  t: number; // open time (ms)
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+  x: boolean; // closed
+}
+
+export interface ManualOrderCreate {
+  account_id: string;
+  symbol: string;
+  side: "BUY" | "SELL";
+  type: "MARKET" | "LIMIT";
+  quantity: string;
+  price?: string;
+  stop_loss: string;
+  take_profit?: string;
+  leverage?: number;
+  confirm: boolean;
+}
+
+export interface ManualOrderResult {
+  ok: boolean;
+  status: string;
+  reason: string;
+  mode: "paper" | "live";
+  order: Order | null;
+  fill_price: string | null;
+  quantity: string;
+  realized_pnl: string;
+}
+
+export interface CloseAllResult {
+  closed: string[];
+  failed: string[];
+  orders_canceled: number;
 }

@@ -15,8 +15,12 @@ import type {
   BacktestRun,
   Bot,
   BotOptions,
+  Candle,
+  CloseAllResult,
   EconomicEvent,
   EquityPoint,
+  ManualOrderCreate,
+  ManualOrderResult,
   Member,
   MonitoringStatus,
   NewsItem,
@@ -70,7 +74,7 @@ function qs(params?: Query): string {
 
 let refreshing: Promise<boolean> | null = null;
 
-async function tryRefresh(): Promise<boolean> {
+export async function tryRefresh(): Promise<boolean> {
   if (!refreshing) {
     refreshing = fetch(`${API_URL}/auth/refresh`, { method: "POST", credentials: "include" })
       .then((r) => r.ok)
@@ -207,6 +211,19 @@ export const api = {
   refreshNews: () => post<{ queued: boolean }>("/news/refresh"),
   calendar: (params?: Query) => request<EconomicEvent[]>(`/calendar/${qs(params)}`),
   refreshCalendar: () => post<{ queued: boolean }>("/calendar/refresh"),
+
+  // real-time panel: market history + manual trading
+  klines: (params: { symbol: string; interval: string; limit?: number; testnet?: boolean }) =>
+    request<Candle[]>(`/market/klines${qs(params)}`),
+  tradingStatus: () => request<{ global_kill_switch: boolean }>("/trading/status"),
+  placeManualOrder: (data: ManualOrderCreate) => post<ManualOrderResult>("/trading/orders", data),
+  cancelManualOrder: (orderId: string, account_id: string) =>
+    request<Order>(`/trading/orders/${orderId}${qs({ account_id })}`, { method: "DELETE" }),
+  closePosition: (account_id: string, symbol: string) =>
+    post<ManualOrderResult>("/trading/close", { account_id, symbol, confirm: true }),
+  closeAll: (account_id: string) => post<CloseAllResult>("/trading/close-all", { account_id, confirm: true }),
+  setLeverage: (account_id: string, symbol: string, leverage: number) =>
+    post<{ symbol: string; leverage: number }>("/trading/leverage", { account_id, symbol, leverage, confirm: true }),
 
   // monitoring / alerts
   monitoringStatus: () => request<MonitoringStatus>("/monitoring/status"),

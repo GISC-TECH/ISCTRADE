@@ -6,11 +6,13 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
+import { TickerBar } from "@/components/ticker-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { href: "/dashboard", label: "Visão geral" },
+  { href: "/dashboard/live", label: "Tempo real & Trading" },
   { href: "/dashboard/accounts", label: "Contas" },
   { href: "/dashboard/bots", label: "Bots" },
   { href: "/dashboard/strategies", label: "Estratégias & Backtest" },
@@ -86,7 +88,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Button>
         </div>
       </aside>
-      <main className="flex-1 overflow-x-hidden p-4 md:p-6">{children}</main>
+      <main className="flex-1 overflow-x-hidden p-4 md:p-6">
+        <TickerBar />
+        {children}
+      </main>
     </div>
   );
 }
