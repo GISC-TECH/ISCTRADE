@@ -22,7 +22,8 @@ Plataforma **self-hosted** para automação e monitoramento de operações em **
 - **Autenticação**: registro/login, JWT de acesso + refresh em cookies `httpOnly`, logout de todas as sessões, troca de senha, rate limiting de login/registro. O primeiro usuário cadastrado vira super-admin.
 - **Workspaces e RBAC**: papéis `admin`, `trader`, `viewer` por workspace; membros, troca de workspace ativo.
 - **Contas Binance**: conexão com chaves criptografadas, verificação de credenciais, start/stop, reset do kill switch, limites de risco por conta.
-- **Bots**: estratégias `grid`, `ema_cross` e `rsi_bollinger` com máquina de estados (`idle → running → paused/stopped/error/killed`), executados pelo Celery a cada candle fechado.
+- **Bots**: estratégias `grid`, `ema_cross`, `rsi_bollinger`, `rsi_mean_reversion`, `bollinger_reversion`, `bollinger_squeeze`, `donchian_breakout`, `ema_adx_trend` e `supertrend` (stop ATR obrigatório, ver [docs/STRATEGIES.md](docs/STRATEGIES.md)) com máquina de estados (`idle → running → paused/stopped/error/killed`), executados pelo Celery a cada candle fechado.
+- **Scanner de mercado**: ranking dos perpétuos USDT-M por liquidez, tendência (ADX/EMAs), ATR%, momentum, pico de volume, funding e sinais das estratégias; snapshot periódico pelo Celery, tela própria e **seleção automática de símbolos** nos bots (top-N com limite de posições simultâneas, sempre via RiskManager).
 - **Backtest**: motor com taxas, slippage, stops com *gap*, mesmas regras de risco do ao vivo; métricas (retorno, drawdown, Sharpe, win rate, profit factor, buy & hold) e curva de patrimônio. Dados públicos da Binance ou CSV próprio.
 - **Integração Binance**: cliente REST assinado, WebSockets (user data + mark price) com reconexão, reconciliador de ordens/posições.
 - **Dashboard**: patrimônio, PnL, posições, curva de equity, histórico de ordens/execuções/auditoria.
@@ -150,7 +151,7 @@ O workflow em [`docs/ci/ci.yml`](docs/ci/ci.yml) (mova para `.github/workflows/`
 
 ## Documentação
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/ALERTS.md`](docs/ALERTS.md) (alertas via WhatsApp)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/ALERTS.md`](docs/ALERTS.md) (alertas via WhatsApp) · [`docs/STRATEGIES.md`](docs/STRATEGIES.md) (estratégias e scanner)
 - [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) — guia para usar agentes de IA (Claude Code, Cursor, Copilot, Aider) e prompts para as etapas restantes; regras em [`AGENTS.md`](AGENTS.md)
 
 ## Segurança

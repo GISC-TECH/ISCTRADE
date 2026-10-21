@@ -20,6 +20,10 @@
 - [x] Motor de backtest com taxas e slippage (stops com *gap*)
 - [ ] Custos de *funding* no backtest
 - [x] Estratégias sobre a interface `Strategy` (grid, cruzamento de EMAs, RSI + Bollinger)
+- [x] Estratégias técnicas com stop ATR: RSI reversão, Bollinger reversão/squeeze, Donchian, EMA + ADX e
+  Supertrend (trailing ATR) — [STRATEGIES.md](STRATEGIES.md)
+- [x] Scanner de mercado USDT-M (liquidez, tendência, ATR%, momentum, volume, funding, sinais) e seleção
+  automática de símbolos nos bots com limite de posições simultâneas
 - [x] Integrar RiskManager no backtest
 - [x] Relatórios: retorno, drawdown máximo, Sharpe, win rate, profit factor, buy & hold
 - [ ] Testes walk-forward / out-of-sample

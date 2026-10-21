@@ -41,17 +41,17 @@
 | **Next.js** (`frontend`) | UI: autenticação, dashboard (saldo, PnL, posições, curva de patrimônio), contas, bots, backtest, histórico, workspaces, perfil e admin. Fala com a API só via `lib/api.ts` (cookies + header `X-Workspace-ID`). |
 | **FastAPI** (`backend`) | Autenticação (JWT em cookie httpOnly com revogação por `token_version`), RBAC, workspaces, contas, bots, backtest, histórico, admin, rate limiting. |
 | **migrate** | Serviço one-shot (`alembic upgrade head`) executado antes de API e workers. |
-| **celery_worker** | Tarefas: tick dos bots, start/stop de contas, reconciliação, snapshots de equity, reset diário e entrega de alertas (`alerts.process`/`alerts.deliver`, com retries). Métricas na porta interna 9101 (modo multiprocess). |
-| **celery_beat** | Agendador (uma única instância): `tick-bots` (30 s), `reconcile-accounts` (60 s), `equity-snapshots` (5 min), `daily-risk-reset` (00:00 UTC), `alerts-daily-summary` (`ALERT_DAILY_SUMMARY_HOUR_UTC`:05). |
+| **celery_worker** | Tarefas: tick dos bots, scanner de mercado (`scanner.run`), start/stop de contas, reconciliação, snapshots de equity, reset diário e entrega de alertas (`alerts.process`/`alerts.deliver`, com retries). Métricas na porta interna 9101 (modo multiprocess). |
+| **celery_beat** | Agendador (uma única instância): `tick-bots` (30 s), `reconcile-accounts` (60 s), `equity-snapshots` (5 min), `daily-risk-reset` (00:00 UTC), `market-scanner` (`SCANNER_REFRESH_SECONDS`), `alerts-daily-summary` (`ALERT_DAILY_SUMMARY_HOUR_UTC`:05). |
 | **streams** | Processo assíncrono com WebSockets da Binance (user data stream com keepalive do listenKey e mark price), alimentando o `Reconciler` e o cache de preços. Grava um heartbeat no Redis (`streams:heartbeat`) e alerta quando um WebSocket fica fora por mais de `ALERT_WS_DISCONNECT_SECONDS`. Métricas na porta interna 9102. |
 | **prometheus / grafana** | Opcionais (`docker compose --profile monitoring up -d`), portas só em `127.0.0.1` (9090 e 3001). Dashboard provisionado em `infra/monitoring/grafana/dashboards`. |
-| **Redis** | Broker do Celery, cache de preços, rate limiting, locks distribuídos por conta/bot. |
+| **Redis** | Broker do Celery, cache de preços e de klines do scanner, rate limiting, locks distribuídos por conta/bot. |
 | **PostgreSQL** | Persistência (usuários, workspaces, contas com chaves criptografadas, bots, ordens, execuções, posições, equity, backtests, auditoria). |
 | **Binance** | REST assinado (HMAC-SHA256) para ordens/conta; WebSocket para mercado e user data stream. |
 
 ## Fluxo de uma ordem
 
-1. A estratégia (`app/strategy`: `grid`, `ema_cross`, `rsi_bollinger`) gera *intenções* de ordem a cada candle fechado (`BotRunner.tick`).
+1. A estratégia (`app/strategy`: `grid`, `ema_cross`, `rsi_bollinger` e as técnicas com stop ATR de `technical.py` — veja [STRATEGIES.md](STRATEGIES.md)) gera *intenções* de ordem a cada candle fechado (`BotRunner.tick`).
 2. `OrderService` arredonda quantidade/preço pelos filtros do símbolo (`SymbolFilters`), verifica o **kill switch global** e chama `RiskManager.validate_order()` com seis regras: kill switch por drawdown, perda diária, stop loss obrigatório, alavancagem, risco por trade e margem disponível. Ordens *reduce-only* sempre passam.
 3. O executor é escolhido por conta (`build_executor`):
    - **`PaperExecutor` (padrão)** — preenchimento simulado com taxa e slippage configuráveis, stops simulados, ledger de paper na própria conta.
