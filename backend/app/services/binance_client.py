@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import logging
 import time
 from decimal import Decimal
 from typing import Any
@@ -27,6 +28,8 @@ from app.exchanges.base import (
 )
 from app.services.binance_http import DEFAULT_TIMEOUT, rate_limits, shared_client
 from app.services.symbol_filters import SymbolFilters
+
+logger = logging.getLogger(__name__)
 
 
 class BinanceAPIError(ExchangeAPIError):
@@ -342,10 +345,36 @@ class BinanceFuturesClient(ExchangeAdapter):
     async def get_realized_pnl(self, start_time: int, end_time: int | None = None) -> Decimal:
         """Sum of REALIZED_PNL + COMMISSION + FUNDING_FEE income since `start_time` (ms)."""
         total = Decimal("0")
-        for row in await self.get_income_history(start_time=start_time, end_time=end_time):
+        async for row in self.iter_income(start_time=start_time, end_time=end_time):
             if row.get("incomeType") in ("REALIZED_PNL", "COMMISSION", "FUNDING_FEE"):
                 total += Decimal(str(row.get("income", "0")))
         return total
+
+    INCOME_PAGE = 1000
+    INCOME_MAX_PAGES = 100
+
+    async def iter_income(self, start_time: int, end_time: int | None = None, income_type: str | None = None):
+        """Every income row since `start_time`, paging past the 1000-row API limit.
+
+        Pages restart at the last row's timestamp (rows can share a millisecond) and are de-duplicated by
+        tranId + incomeType, so nothing is lost or counted twice at page boundaries.
+        """
+        seen: set[tuple] = set()
+        cursor = start_time
+        for _ in range(self.INCOME_MAX_PAGES):
+            page = await self.get_income_history(
+                income_type=income_type, start_time=cursor, end_time=end_time, limit=self.INCOME_PAGE
+            )
+            for row in page:
+                key = (row.get("tranId"), row.get("incomeType"), row.get("time"), row.get("symbol"))
+                if key not in seen:
+                    seen.add(key)
+                    yield row
+            if len(page) < self.INCOME_PAGE:
+                return
+            last = int(page[-1].get("time") or cursor)
+            cursor = last if last > cursor else cursor + 1  # a full page within one millisecond: move on
+        logger.warning("income history truncated after %d pages since %s", self.INCOME_MAX_PAGES, start_time)
 
     async def get_user_trades(
         self, symbol: str, start_time: int | None = None, from_id: int | None = None, limit: int = 500

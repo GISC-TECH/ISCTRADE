@@ -118,3 +118,28 @@ async def test_reads_retry_transient_errors_but_writes_do_not() -> None:
         with pytest.raises(BinanceAPIError):
             await c.set_leverage("BTCUSDT", 2)
     assert gets == 3 and posts == 1
+
+
+async def test_realized_pnl_pages_past_1000_rows() -> None:
+    import httpx
+
+    from app.services.binance_client import BinanceFuturesClient
+
+    rows = [
+        {"tranId": i, "incomeType": "REALIZED_PNL", "income": "1", "time": 1_000 + i // 3, "symbol": "BTCUSDT"}
+        for i in range(2500)
+    ]
+    starts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        q = dict(request.url.params)
+        start, limit = int(q["startTime"]), int(q["limit"])
+        starts.append(start)
+        page = [r for r in rows if r["time"] >= start][:limit]
+        return httpx.Response(200, json=page)
+
+    client = BinanceFuturesClient("k", "s", testnet=True, transport=httpx.MockTransport(handler))
+    total = await client.get_realized_pnl(start_time=0)
+    await client.close()
+    assert total == 2500  # every row once, none duplicated across page boundaries (shared timestamps)
+    assert len(starts) == 3
