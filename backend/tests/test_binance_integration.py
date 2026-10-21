@@ -352,3 +352,35 @@ async def test_dashboard_live_from_exchange(db) -> None:
     async with mock_client(lambda r: httpx.Response(500, json={"code": -1000, "msg": "boom"})) as client:
         data = await build_dashboard(db, acc, client)
     assert data["error"] and data["source"] == "database"
+
+
+async def test_dashboard_live_requests_run_concurrently_without_extra_position_call(db) -> None:
+    import asyncio
+
+    _, ws = await make_user_workspace(db)
+    acc = await make_account(db, ws, execution_mode=ExecutionMode.LIVE)
+    in_flight, peak, paths = 0, 0, []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, peak
+        paths.append(request.url.path)
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.02)
+        in_flight -= 1
+        if request.url.path == "/fapi/v2/account":
+            body = {
+                "totalWalletBalance": "100",
+                "totalUnrealizedProfit": "0",
+                "availableBalance": "100",
+                "positions": [],
+            }
+            return httpx.Response(200, json=body)
+        return httpx.Response(200, json=[])
+
+    client = BinanceFuturesClient("k", "s", testnet=True, transport=httpx.MockTransport(handler))
+    async with client:
+        data = await build_dashboard(db, acc, client)
+    assert data["source"] == "exchange" and data["open_positions"] == 0
+    assert peak == 2  # account + income in parallel
+    assert "/fapi/v2/positionRisk" not in paths

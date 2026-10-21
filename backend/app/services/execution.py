@@ -12,6 +12,7 @@ Executors:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -300,62 +301,71 @@ class LiveExecutor:
         avg = Decimal(str(resp.get("avgPrice", "0") or "0"))
         order.avg_price = avg or None
 
+        protective: list[Order] = []
         if stop_loss is not None and not reduce_only:
-            stop_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
-            stop = Order(
-                workspace_id=account.workspace_id,
-                account_id=account.id,
-                bot_id=bot.id if bot else None,
-                symbol=symbol,
-                side=stop_side,
-                type=OrderType.STOP_MARKET,
-                status=OrderStatus.PENDING,
-                quantity=quantity,
-                stop_price=stop_loss,
-                leverage=leverage,
-                reduce_only=True,
-                client_order_id=new_client_order_id(),
-                is_paper=False,
-                reason=f"{tag}:stop_loss",
+            protective.append(
+                self._protective_order(
+                    account, bot, symbol, side, quantity, leverage, tag, OrderType.STOP_MARKET, stop_loss
+                )
             )
-            db.add(stop)
-            await db.flush()
-            sresp = await self.client.place_order(
-                symbol=symbol,
-                side=stop_side.value,
-                order_type="STOP_MARKET",
-                stop_price=stop_loss,
-                close_position=True,
-                client_order_id=stop.client_order_id,
-                workingType="MARK_PRICE",
-            )
-            stop.exchange_order_id = str(sresp.get("orderId"))
-            stop.status = OrderStatus(sresp.get("status", "NEW"))
         if take_profit is not None and not reduce_only:
-            await self._protective(db, account, bot, symbol, side, quantity, leverage, tag, take_profit)
+            protective.append(
+                self._protective_order(
+                    account, bot, symbol, side, quantity, leverage, tag, OrderType.TAKE_PROFIT_MARKET, take_profit
+                )
+            )
+        if protective:
+            await self._place_protective(db, symbol, protective)
         # Fills (Trade rows) and positions are synchronized by the reconciler / user-data stream.
         return ExecutionResult(True, order.status.value, order, avg or ref_price, order.executed_qty)
 
-    async def _protective(
-        self, db: AsyncSession, account: Account, bot: BotConfig | None, symbol: str, side: OrderSide,
-        quantity: Decimal, leverage: int, tag: str, take_profit: Decimal,
-    ) -> None:  # fmt: skip
-        """Exchange-side TAKE_PROFIT_MARKET (closePosition) protecting a live entry."""
-        tp_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
-        tp = Order(
+    @staticmethod
+    def _protective_order(
+        account: Account, bot: BotConfig | None, symbol: str, side: OrderSide, quantity: Decimal, leverage: int,
+        tag: str, kind: OrderType, trigger: Decimal,
+    ) -> Order:  # fmt: skip
+        """Exchange-side STOP_MARKET / TAKE_PROFIT_MARKET (closePosition) protecting a live entry."""
+        suffix = "stop_loss" if kind == OrderType.STOP_MARKET else "take_profit"
+        return Order(
             workspace_id=account.workspace_id, account_id=account.id, bot_id=bot.id if bot else None, symbol=symbol,
-            side=tp_side, type=OrderType.TAKE_PROFIT_MARKET, status=OrderStatus.PENDING, quantity=quantity,
-            stop_price=take_profit, leverage=leverage, reduce_only=True, client_order_id=new_client_order_id(),
-            is_paper=False, reason=f"{tag}:take_profit",
+            side=OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY, type=kind, status=OrderStatus.PENDING,
+            quantity=quantity, stop_price=trigger, leverage=leverage, reduce_only=True,
+            client_order_id=new_client_order_id(), is_paper=False, reason=f"{tag}:{suffix}",
         )  # fmt: skip
-        db.add(tp)
+
+    async def _place_protective(self, db: AsyncSession, symbol: str, orders: list[Order]) -> None:
+        """Send SL and TP concurrently (independent closePosition orders): one exchange round trip instead of two.
+
+        Rows are flushed first (clientOrderId persisted before anything reaches the exchange). Every order gets its
+        response applied; the first failure is re-raised afterwards, as before.
+        """
+        for o in orders:
+            db.add(o)
         await db.flush()
-        resp = await self.client.place_order(
-            symbol=symbol, side=tp_side.value, order_type="TAKE_PROFIT_MARKET", stop_price=take_profit,
-            close_position=True, client_order_id=tp.client_order_id, workingType="MARK_PRICE",
-        )  # fmt: skip
-        tp.exchange_order_id = str(resp.get("orderId"))
-        tp.status = OrderStatus(resp.get("status", "NEW"))
+        responses = await asyncio.gather(
+            *(
+                self.client.place_order(
+                    symbol=symbol,
+                    side=o.side.value,
+                    order_type=o.type.value,
+                    stop_price=o.stop_price,
+                    close_position=True,
+                    client_order_id=o.client_order_id,
+                    workingType="MARK_PRICE",
+                )  # fmt: skip
+                for o in orders
+            ),
+            return_exceptions=True,
+        )
+        error: BaseException | None = None
+        for o, resp in zip(orders, responses, strict=True):
+            if isinstance(resp, BaseException):
+                error = error or resp
+                continue
+            o.exchange_order_id = str(resp.get("orderId"))
+            o.status = OrderStatus(resp.get("status", "NEW"))
+        if error is not None:
+            raise error
 
 
 async def is_global_kill_switch_on(db: AsyncSession) -> bool:

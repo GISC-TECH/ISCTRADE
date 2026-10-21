@@ -231,3 +231,39 @@ def test_risk_manager_margin_rule() -> None:
         OrderRequest("BTCUSDT", OrderSide.BUY, D("200"), D("100"), D("99.5"), 1), risk("10000")
     )
     assert not ok and reason.startswith("insufficient_margin")
+
+
+async def test_live_protective_orders_are_sent_concurrently(db, monkeypatch) -> None:
+    import asyncio
+
+    monkeypatch.setattr(settings, "LIVE_TRADING_ENABLED", True)
+    in_flight, peak, types = 0, 0, []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, peak
+        q = dict(request.url.params)
+        types.append(q["type"])
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.02)
+        in_flight -= 1
+        if q["type"] == "MARKET":
+            return httpx.Response(200, json={"orderId": 1, "status": "FILLED", "executedQty": q["quantity"]})
+        if q["type"] == "TAKE_PROFIT_MARKET":
+            return httpx.Response(400, json={"code": -2021, "msg": "Order would immediately trigger."})
+        return httpx.Response(200, json={"orderId": 2, "status": "NEW"})
+
+    client = BinanceFuturesClient("k", "s", testnet=True, transport=httpx.MockTransport(handler))
+    _, ws = await make_user_workspace(db)
+    acc = await make_account(db, ws, execution_mode=ExecutionMode.LIVE)
+    executor = LiveExecutor(client)
+    with pytest.raises(Exception, match="-2021"):
+        await executor.execute(
+            db, acc, None, "BTCUSDT", OrderSide.BUY, D("0.5"), D("100"), stop_loss=D("95"), reduce_only=False,
+            leverage=2, tag="t", take_profit=D("110"),
+        )  # fmt: skip
+    await client.close()
+    assert types[0] == "MARKET" and sorted(types[1:]) == ["STOP_MARKET", "TAKE_PROFIT_MARKET"]
+    assert peak == 2  # SL and TP in flight together, after the entry
+    stop = await db.scalar(select(Order).where(Order.type == "STOP_MARKET"))
+    assert stop.exchange_order_id == "2" and stop.status == OrderStatus.NEW  # SL still recorded when TP fails

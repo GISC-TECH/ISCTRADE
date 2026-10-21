@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, time, timezone
 from decimal import Decimal
@@ -82,12 +83,13 @@ async def _paper_data(db: AsyncSession, account: Account) -> dict[str, Any]:
 
 
 async def _exchange_data(client: ExchangeAdapter) -> dict[str, Any]:
-    acc = await client.get_account()
-    raw_positions = [p for p in acc.get("positions", []) if Decimal(str(p.get("positionAmt", "0"))) != 0]
-    if not raw_positions:
-        raw_positions = await client.get_positions()
     start_ms = int(_day_start().timestamp() * 1000)
-    realized_today = await client.get_realized_pnl(start_ms)
+    # Independent requests: one round trip instead of two (income history is the slowest call).
+    acc, realized_today = await asyncio.gather(client.get_account(), client.get_realized_pnl(start_ms))
+    if "positions" in acc:  # /fapi/v2/account already lists every position: no extra positionRisk (weight 5)
+        raw_positions = [p for p in acc["positions"] if Decimal(str(p.get("positionAmt", "0"))) != 0]
+    else:
+        raw_positions = await client.get_positions()
     positions = [
         {
             "symbol": p["symbol"],
