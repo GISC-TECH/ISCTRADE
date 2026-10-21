@@ -19,6 +19,7 @@ import httpx
 from defusedxml import ElementTree as SafeET
 
 from app.core.config import settings
+from app.core.http_limits import fetch_limited
 
 logger = logging.getLogger(__name__)
 
@@ -126,8 +127,15 @@ def parse_feed(xml_text: str, feed_url: str, limit: int | None = None) -> list[R
     return out
 
 
+async def _get(client: httpx.AsyncClient, url: str, **kw: Any) -> httpx.Response:
+    return await fetch_limited(
+        client, "GET", url, max_bytes=settings.NEWS_MAX_RESPONSE_BYTES, deadline=settings.NEWS_FETCH_DEADLINE_SECONDS,
+        **kw,
+    )  # fmt: skip
+
+
 async def fetch_rss(client: httpx.AsyncClient, url: str) -> list[RawNews]:
-    resp = await client.get(url, headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, */*"})
+    resp = await _get(client, url, headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, */*"})
     resp.raise_for_status()
     return parse_feed(resp.text, url)
 
@@ -136,7 +144,7 @@ async def fetch_cryptopanic(client: httpx.AsyncClient) -> list[RawNews]:
     if not settings.CRYPTOPANIC_API_TOKEN:
         return []
     params = {"auth_token": settings.CRYPTOPANIC_API_TOKEN, "public": "true", "kind": "news"}
-    resp = await client.get(settings.CRYPTOPANIC_API_URL, params=params, headers={"User-Agent": USER_AGENT})
+    resp = await _get(client, settings.CRYPTOPANIC_API_URL, params=params, headers={"User-Agent": USER_AGENT})
     resp.raise_for_status()
     out: list[RawNews] = []
     now = datetime.now(UTC)
@@ -183,7 +191,7 @@ async def fetch_x(client: httpx.AsyncClient) -> list[RawNews]:
         "user.fields": "username",
     }
     headers = {"Authorization": f"Bearer {settings.X_BEARER_TOKEN}", "User-Agent": USER_AGENT}
-    resp = await client.get(settings.X_API_URL, params=params, headers=headers)
+    resp = await _get(client, settings.X_API_URL, params=params, headers=headers)
     resp.raise_for_status()
     data = resp.json() or {}
     users = {u.get("id"): u.get("username") for u in (data.get("includes") or {}).get("users", [])}

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.core.http_limits import fetch_limited
 from app.models.base import utcnow
 from app.models.news import EconomicEvent
 from app.services.news.gate import EventInfo
@@ -80,7 +81,10 @@ def manual_events() -> list[dict[str, Any]]:
 
 
 async def fetch_forexfactory(client: httpx.AsyncClient) -> list[dict[str, Any]]:
-    resp = await client.get(settings.ECON_CALENDAR_URL, headers={"User-Agent": USER_AGENT})
+    resp = await fetch_limited(
+        client, "GET", settings.ECON_CALENDAR_URL, headers={"User-Agent": USER_AGENT},
+        max_bytes=settings.NEWS_MAX_RESPONSE_BYTES, deadline=settings.NEWS_FETCH_DEADLINE_SECONDS,
+    )  # fmt: skip
     resp.raise_for_status()
     data = resp.json()
     return parse_events(data if isinstance(data, list) else [], "forexfactory")

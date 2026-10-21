@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     NEWS_REFRESH_SECONDS: int = 300
     NEWS_RETENTION_DAYS: int = 14
     NEWS_HTTP_TIMEOUT_SECONDS: float = 10.0
+    # Hard caps for third-party content: total time per fetch and decoded body size (slow-drip / huge feeds).
+    NEWS_FETCH_DEADLINE_SECONDS: float = 30.0
+    NEWS_MAX_RESPONSE_BYTES: int = 5_000_000
     NEWS_RSS_FEEDS: Annotated[list[str], NoDecode] = [
         "https://www.coindesk.com/arc/outboundfeeds/rss/",
         "https://cointelegraph.com/rss",
@@ -135,6 +138,7 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "gpt-4o-mini"
     LLM_TIMEOUT_SECONDS: float = 20.0
+    LLM_MAX_RESPONSE_BYTES: int = 1_000_000
     LLM_MAX_CALLS_PER_HOUR: int = 60
     LLM_MAX_ITEMS_PER_RUN: int = 20
 

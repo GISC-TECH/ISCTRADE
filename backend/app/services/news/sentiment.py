@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.http_limits import fetch_limited
 from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
@@ -200,7 +201,10 @@ async def llm_sentiment(
     own = client is None
     http = client or httpx.AsyncClient(timeout=settings.LLM_TIMEOUT_SECONDS)
     try:
-        resp = await http.post(url, json=payload, headers=headers, timeout=settings.LLM_TIMEOUT_SECONDS)
+        resp = await fetch_limited(
+            http, "POST", url, json=payload, headers=headers, timeout=settings.LLM_TIMEOUT_SECONDS,
+            max_bytes=settings.LLM_MAX_RESPONSE_BYTES, deadline=settings.LLM_TIMEOUT_SECONDS * 1.5,
+        )  # fmt: skip
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"]
         result = parse_llm_json(content)
