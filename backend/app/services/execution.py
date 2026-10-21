@@ -315,9 +315,61 @@ class LiveExecutor:
                 )
             )
         if protective:
-            await self._place_protective(db, symbol, protective)
+            errors = await self._place_protective(db, symbol, protective)
+            stop_err = next((e for o, e in errors if o.type == OrderType.STOP_MARKET), None)
+            if stop_err is not None:
+                # Never leave a live entry without its stop: undo the entry (cancel / flatten) and fail loudly.
+                for o in protective:
+                    if o.type != OrderType.STOP_MARKET and o.status != OrderStatus.REJECTED:
+                        await self._safe_cancel(symbol, o)  # a lone closePosition TP would linger
+                undone = await self._undo_entry(order, symbol, protective[0].side)
+                await log_event(
+                    db, "order.protection_failed", level="critical", workspace_id=account.workspace_id,
+                    account_id=account.id, symbol=symbol, side=side, quantity=quantity, error=str(stop_err)[:200],
+                    entry_undone=undone,
+                )  # fmt: skip
+                return ExecutionResult(
+                    False, f"protective_stop_failed: {stop_err}"[:255], order, avg or ref_price, order.executed_qty
+                )
+            for o, exc in errors:  # the stop is in place; a missing TP is not worth flattening the trade
+                logger.warning("take profit placement failed: %s", exc)
+                await log_event(
+                    db, "order.take_profit_failed", level="warning", workspace_id=account.workspace_id,
+                    account_id=account.id, symbol=symbol, error=str(exc)[:200],
+                )  # fmt: skip
         # Fills (Trade rows) and positions are synchronized by the reconciler / user-data stream.
         return ExecutionResult(True, order.status.value, order, avg or ref_price, order.executed_qty)
+
+    async def _undo_entry(self, order: Order, symbol: str, exit_side: OrderSide) -> str:
+        """Best effort after a failed protective stop: cancel the rest of the entry and close what was filled."""
+        done = []
+        if order.status in (OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED, OrderStatus.PENDING):
+            try:
+                resp = await self.client.cancel_order(symbol, client_order_id=order.client_order_id)
+                order.status = OrderStatus(resp.get("status", "CANCELED"))
+                order.executed_qty = Decimal(str(resp.get("executedQty", order.executed_qty or 0)))
+                done.append("canceled")
+            except Exception as exc:  # pragma: no cover - logged, reconciler will catch up
+                logger.error("could not cancel unprotected entry %s: %s", order.client_order_id, exc)
+        filled = Decimal(order.executed_qty or 0)
+        if filled > 0:
+            try:
+                await self.client.place_order(
+                    symbol=symbol, side=exit_side.value, order_type="MARKET", quantity=filled, reduce_only=True,
+                    client_order_id=new_client_order_id(),
+                )  # fmt: skip
+                done.append(f"closed {filled}")
+            except Exception as exc:
+                logger.critical("UNPROTECTED POSITION %s %s: close failed: %s", symbol, filled, exc)
+                done.append("close_failed")
+        return ",".join(done) or "nothing_to_undo"
+
+    async def _safe_cancel(self, symbol: str, o: Order) -> None:
+        try:
+            await self.client.cancel_order(symbol, client_order_id=o.client_order_id)
+            o.status = OrderStatus.CANCELED
+        except Exception as exc:  # pragma: no cover - reconciler will catch up
+            logger.error("could not cancel %s: %s", o.client_order_id, exc)
 
     @staticmethod
     def _protective_order(
@@ -333,11 +385,13 @@ class LiveExecutor:
             client_order_id=new_client_order_id(), is_paper=False, reason=f"{tag}:{suffix}",
         )  # fmt: skip
 
-    async def _place_protective(self, db: AsyncSession, symbol: str, orders: list[Order]) -> None:
+    async def _place_protective(
+        self, db: AsyncSession, symbol: str, orders: list[Order]
+    ) -> list[tuple[Order, BaseException]]:
         """Send SL and TP concurrently (independent closePosition orders): one exchange round trip instead of two.
 
         Rows are flushed first (clientOrderId persisted before anything reaches the exchange). Every order gets its
-        response applied; the first failure is re-raised afterwards, as before.
+        response applied; failures are returned (marked REJECTED) so the caller decides how to react.
         """
         for o in orders:
             db.add(o)
@@ -357,15 +411,15 @@ class LiveExecutor:
             ),
             return_exceptions=True,
         )
-        error: BaseException | None = None
+        errors: list[tuple[Order, BaseException]] = []
         for o, resp in zip(orders, responses, strict=True):
             if isinstance(resp, BaseException):
-                error = error or resp
+                o.status, o.reason = OrderStatus.REJECTED, f"{o.reason} | {resp}"[:255]
+                errors.append((o, resp))
                 continue
             o.exchange_order_id = str(resp.get("orderId"))
             o.status = OrderStatus(resp.get("status", "NEW"))
-        if error is not None:
-            raise error
+        return errors
 
 
 async def is_global_kill_switch_on(db: AsyncSession) -> bool:

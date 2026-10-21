@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from decimal import Decimal
 
@@ -14,6 +15,8 @@ from app.models.system import GLOBAL_KILL_SWITCH, SystemSetting
 from app.services.audit import log_event
 from app.services.equity import open_positions
 from app.strategy.state_machine import ACTIVE_STATES
+
+logger = logging.getLogger(__name__)
 
 
 async def close_paper_positions(db: AsyncSession, account: Account, tag: str) -> int:
@@ -33,23 +36,57 @@ async def close_paper_positions(db: AsyncSession, account: Account, tag: str) ->
 
 
 async def close_live_positions(account: Account) -> int:
-    """Cancel open orders and close every position with reduce-only MARKET orders."""
+    """Cancel every open order (all symbols) and close every position with reduce-only MARKET orders.
+
+    One failing symbol must not stop the others (a kill switch that aborts half-way leaves exposure).
+    """
     from app.services.accounts import client_for_account
 
     closed = 0
     async with client_for_account(account) as client:
-        for p in await client.get_positions():
+        positions = await client.get_positions()
+        try:
+            open_orders = await client.get_open_orders()
+        except Exception as exc:
+            logger.error("kill switch: could not list open orders: %s", exc)
+            open_orders = []
+        symbols = {p["symbol"] for p in positions} | {o["symbol"] for o in open_orders if o.get("symbol")}
+        for symbol in sorted(symbols):
+            try:
+                await client.cancel_all_orders(symbol)
+            except Exception as exc:
+                logger.error("kill switch: cancel_all_orders(%s) failed: %s", symbol, exc)
+        for p in positions:
             qty = Decimal(str(p["positionAmt"]))
-            await client.cancel_all_orders(p["symbol"])
-            await client.place_order(
-                symbol=p["symbol"],
-                side="SELL" if qty > 0 else "BUY",
-                order_type="MARKET",
-                quantity=abs(qty),
-                reduce_only=True,
-            )
-            closed += 1
+            try:
+                await client.place_order(
+                    symbol=p["symbol"],
+                    side="SELL" if qty > 0 else "BUY",
+                    order_type="MARKET",
+                    quantity=abs(qty),
+                    reduce_only=True,
+                )
+                closed += 1
+            except Exception as exc:
+                logger.critical("kill switch: could not close %s %s: %s", p["symbol"], qty, exc)
     return closed
+
+
+async def cancel_live_entry_orders(account: Account) -> int:
+    """Kill switch without closing: cancel orders that could open/increase exposure, keep protective stops."""
+    from app.services.accounts import client_for_account
+
+    canceled = 0
+    async with client_for_account(account) as client:
+        for o in await client.get_open_orders():
+            if str(o.get("reduceOnly")).lower() == "true" or str(o.get("closePosition")).lower() == "true":
+                continue
+            try:
+                await client.cancel_order(o["symbol"], client_order_id=o.get("clientOrderId"))
+                canceled += 1
+            except Exception as exc:
+                logger.error("kill switch: cancel %s failed: %s", o.get("clientOrderId"), exc)
+    return canceled
 
 
 async def trigger_account_kill_switch(
@@ -62,12 +99,19 @@ async def trigger_account_kill_switch(
         bot.state = BotState.KILLED
     closed = 0
     should_close = settings.KILL_SWITCH_CLOSE_POSITIONS if close_positions is None else close_positions
-    if should_close:
-        if account.execution_mode == ExecutionMode.LIVE:
-            if settings.LIVE_TRADING_ENABLED:
-                closed = await close_live_positions(account)
-        else:
-            closed = await close_paper_positions(db, account, "kill_switch")
+    error = None
+    if account.execution_mode == ExecutionMode.LIVE:
+        if settings.LIVE_TRADING_ENABLED:
+            try:  # the account stays KILLED even if the exchange is unreachable
+                if should_close:
+                    closed = await close_live_positions(account)
+                else:
+                    await cancel_live_entry_orders(account)
+            except Exception as exc:
+                error = str(exc)[:200]
+                logger.critical("kill switch: exchange cleanup failed for %s: %s", account.id, exc)
+    elif should_close:
+        closed = await close_paper_positions(db, account, "kill_switch")
     await log_event(
         db,
         "risk.kill_switch",
@@ -76,6 +120,7 @@ async def trigger_account_kill_switch(
         account_id=account.id,
         reason=reason,
         positions_closed=closed,
+        error=error,
     )
 
 
