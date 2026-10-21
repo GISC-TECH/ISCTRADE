@@ -73,6 +73,8 @@ export function useRealtime(): RealtimeSnapshot {
 export function useRealtimeSelector<T>(select: (snap: RealtimeSnapshot) => T): T {
   const client = useRealtimeClient();
   const ref = useRef(select);
+  // Latest-selector ref read synchronously by getSnapshot (must not lag one render behind like an effect would).
+  // eslint-disable-next-line react-hooks/refs
   ref.current = select;
   const getSnapshot = useCallback(() => ref.current(client ? client.getSnapshot() : EMPTY), [client]);
   const getServerSnapshot = useCallback(() => ref.current(EMPTY), []);
