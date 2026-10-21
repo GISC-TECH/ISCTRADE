@@ -64,6 +64,22 @@ export function ema(values: number[], period: number): (number | null)[] {
   return out;
 }
 
+/**
+ * EMA value at index `i` given the EMA at `i - 1` (O(1); O(period) only for the seed value).
+ * Used for live candles so a kline update does not recompute/re-send the whole series.
+ */
+export function emaAt(closes: number[], i: number, period: number, prev: number | null): number | null {
+  if (i < period - 1) return null;
+  if (i === period - 1) {
+    let sum = 0;
+    for (let j = 0; j < period; j++) sum += closes[j];
+    return sum / period;
+  }
+  if (prev === null) return null;
+  const k = 2 / (period + 1);
+  return closes[i] * k + prev * (1 - k);
+}
+
 const toTime = (ms: number) => Math.floor(ms / 1000) as UTCTimestamp;
 
 function cssVar(name: string, fallback: string): string {
@@ -93,6 +109,7 @@ export function CandleChart({
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const emaRefs = useRef<Map<number, ISeriesApi<"Line">>>(new Map());
+  const emaValuesRef = useRef<Map<number, (number | null)[]>>(new Map());
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const barsRef = useRef<CandlestickData<UTCTimestamp>[]>([]);
@@ -153,6 +170,7 @@ export function CandleChart({
       markersRef.current = null;
       priceLinesRef.current = [];
       emaRefs.current = new Map();
+      emaValuesRef.current = new Map();
     };
   }, [height, emaKey]);
 
@@ -161,11 +179,32 @@ export function CandleChart({
     const closes = bars.map((b) => b.close);
     emaRefs.current.forEach((series, period) => {
       const values = ema(closes, period);
+      emaValuesRef.current.set(period, values);
       const data: LineData<UTCTimestamp>[] = [];
       values.forEach((v, i) => v !== null && data.push({ time: bars[i].time, value: v }));
       series.setData(data);
     });
   }, []);
+
+  // incremental EMA for the last bar: O(1) per series instead of recomputing 500 points and
+  // re-sending them with setData on every kline message
+  const updateLastEma = useCallback(() => {
+    const bars = barsRef.current;
+    const i = bars.length - 1;
+    if (i < 0) return;
+    const closes = bars.map((b) => b.close);
+    emaRefs.current.forEach((series, period) => {
+      const values = emaValuesRef.current.get(period);
+      if (!values || values.length < i) {
+        refreshEmas();
+        return;
+      }
+      values.length = i; // drop the in-progress value (same bar) before recomputing it
+      const v = emaAt(closes, i, period, i > 0 ? values[i - 1] : null);
+      values.push(v);
+      if (v !== null) series.update({ time: bars[i].time, value: v });
+    });
+  }, [refreshEmas]);
 
   // history
   useEffect(() => {
@@ -199,7 +238,7 @@ export function CandleChart({
     if (bar.time === last.time) bars[bars.length - 1] = bar;
     else bars.push(bar);
     series.update(bar);
-    refreshEmas();
+    updateLastEma();
   });
 
   // trade markers (entries/exits)

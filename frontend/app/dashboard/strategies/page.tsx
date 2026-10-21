@@ -10,7 +10,7 @@ import {
   withDefaults,
 } from "@/components/bot-options";
 import { EmptyState, PageHeader } from "@/components/common";
-import { EquityChart } from "@/components/equity-chart";
+import { EquityChart } from "@/components/equity-chart-lazy";
 import { ParamFields, defaultParams } from "@/components/param-fields";
 import { PresetPicker } from "@/components/preset-picker";
 import { Alert } from "@/components/ui/alert";

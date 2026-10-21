@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/common";
-import { EquityChart, type EquityPoint } from "@/components/equity-chart";
+import type { EquityPoint } from "@/components/equity-chart";
+import { EquityChart } from "@/components/equity-chart-lazy";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
