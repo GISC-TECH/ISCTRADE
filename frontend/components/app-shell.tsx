@@ -14,6 +14,7 @@ const nav = [
   { href: "/dashboard/accounts", label: "Contas" },
   { href: "/dashboard/bots", label: "Bots" },
   { href: "/dashboard/strategies", label: "Estratégias & Backtest" },
+  { href: "/dashboard/scanner", label: "Scanner" },
   { href: "/dashboard/history", label: "Histórico" },
   { href: "/dashboard/monitoring", label: "Monitoramento" },
   { href: "/dashboard/workspaces", label: "Workspaces" },

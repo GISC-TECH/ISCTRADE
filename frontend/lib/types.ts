@@ -127,6 +127,7 @@ export interface Bot {
   interval: string;
   leverage: number;
   params: Record<string, unknown>;
+  options: Partial<BotOptions>;
   state: BotState;
   runtime: Record<string, unknown>;
   is_enabled: boolean;
@@ -344,4 +345,48 @@ export interface MonitoringStatus {
   alerts_failed_24h: number;
   alerts_enabled: boolean;
   metrics_enabled: boolean;
+}
+
+// bot options / scanner
+export interface AutoSymbolsOptions {
+  enabled: boolean;
+  top_n: number;
+  max_positions: number;
+  min_score: number;
+  prefer_signals: boolean;
+}
+
+export interface BotOptions {
+  auto_symbols: AutoSymbolsOptions;
+}
+
+export interface ScannerRow {
+  symbol: string;
+  rank: number;
+  price: number;
+  change_pct_24h: number;
+  quote_volume: number;
+  funding_rate_pct: number;
+  atr_pct: number;
+  adx: number;
+  rsi: number | null;
+  trend: "up" | "down" | "flat";
+  momentum_pct: number;
+  volume_spike: number;
+  signals: Record<string, "long" | "short">;
+  bias: "long" | "short" | "neutral";
+  components: Record<string, number>;
+  score: number;
+}
+
+export interface ScannerResponse {
+  scanned_at: string | null;
+  interval: string;
+  testnet: boolean;
+  symbols_scanned: number;
+  total: number;
+  duration_ms: number;
+  weights: Record<string, number>;
+  strategies: string[];
+  results: ScannerRow[];
 }

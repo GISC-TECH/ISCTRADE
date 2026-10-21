@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/common";
+import { BotOptionsFields, DEFAULT_BOT_OPTIONS, withDefaults } from "@/components/bot-options";
 import { ParamFields, defaultParams } from "@/components/param-fields";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { api, errorMessage } from "@/lib/api";
 import { INTERVALS } from "@/lib/constants";
 import { dateTime } from "@/lib/format";
-import type { Account, Bot, StrategyInfo } from "@/lib/types";
+import type { Account, Bot, BotOptions, StrategyInfo } from "@/lib/types";
 
 
 function CreateBotDialog({
@@ -44,6 +45,7 @@ function CreateBotDialog({
   const [leverage, setLeverage] = useState(2);
   const strategy = useMemo(() => strategies.find((s) => s.key === strategyKey), [strategies, strategyKey]);
   const [params, setParams] = useState<Record<string, unknown>>(() => defaultParams(strategies[0]));
+  const [options, setOptions] = useState<BotOptions>(DEFAULT_BOT_OPTIONS);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => setParams(defaultParams(strategy)), [strategy]);
@@ -55,7 +57,16 @@ function CreateBotDialog({
     e.preventDefault();
     setError(null);
     try {
-      await api.createBot({ account_id: accountId, name, strategy_key: strategyKey, symbol, interval, leverage, params });
+      await api.createBot({
+        account_id: accountId,
+        name,
+        strategy_key: strategyKey,
+        symbol,
+        interval,
+        leverage,
+        params,
+        options,
+      });
       setOpen(false);
       setName("");
       onCreated();
@@ -135,11 +146,57 @@ function CreateBotDialog({
               <ParamFields strategy={strategy} values={params} onChange={setParams} />
             </>
           )}
+          <BotOptionsFields value={options} onChange={setOptions} />
           {error && <Alert variant="destructive">{error}</Alert>}
           <DialogFooter>
             <Button type="submit">Criar</Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BotOptionsDialog({ bot, onSaved }: { bot: Bot; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<BotOptions>(() => withDefaults(bot.options));
+  const [error, setError] = useState<string | null>(null);
+  const editable = ["idle", "stopped", "error", "killed"].includes(bot.state);
+
+  async function save() {
+    setError(null);
+    try {
+      await api.updateBot(bot.id, { options });
+      setOpen(false);
+      onSaved();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) setOptions(withDefaults(bot.options));
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" disabled={!editable} title={editable ? "" : "Pare o bot para editar"}>
+          Opções
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Opções do bot {bot.name}</DialogTitle>
+          <DialogDescription>Salvar reinicia o estado interno do bot.</DialogDescription>
+        </DialogHeader>
+        <BotOptionsFields value={options} onChange={setOptions} />
+        {error && <Alert variant="destructive">{error}</Alert>}
+        <DialogFooter>
+          <Button onClick={save}>Salvar</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -216,7 +273,17 @@ export default function BotsPage() {
                     </TableCell>
                     <TableCell>{accountName(b.account_id)}</TableCell>
                     <TableCell>
-                      {b.symbol} · {b.interval} · {b.leverage}x
+                      {b.options?.auto_symbols?.enabled ? (
+                        <span title={((b.runtime?.auto as string[] | undefined) ?? []).join(", ")}>
+                          auto (top {b.options.auto_symbols.top_n})
+                        </span>
+                      ) : (
+                        b.symbol
+                      )}{" "}
+                      · {b.interval} · {b.leverage}x
+                      {b.options?.auto_symbols?.enabled && Array.isArray(b.runtime?.auto) && (
+                        <div className="text-xs text-muted-foreground">{(b.runtime.auto as string[]).join(", ")}</div>
+                      )}
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={b.state} />
@@ -251,6 +318,7 @@ export default function BotsPage() {
                               Resetar
                             </Button>
                           )}
+                          <BotOptionsDialog bot={b} onSaved={load} />
                           <Button
                             size="sm"
                             variant="destructive"

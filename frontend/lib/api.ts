@@ -13,6 +13,7 @@ import type {
   BacktestRequest,
   BacktestRun,
   Bot,
+  BotOptions,
   EquityPoint,
   Member,
   MonitoringStatus,
@@ -20,6 +21,7 @@ import type {
   Page,
   PositionOut,
   Role,
+  ScannerResponse,
   StrategyInfo,
   TokenResponse,
   Trade,
@@ -166,9 +168,12 @@ export const api = {
     interval: string;
     leverage: number;
     params: Record<string, unknown>;
+    options?: BotOptions;
   }) => post<Bot>("/bots/", data),
-  updateBot: (id: string, data: Partial<Pick<Bot, "name" | "interval" | "leverage" | "params" | "is_enabled">>) =>
-    patch<Bot>(`/bots/${id}`, data),
+  updateBot: (
+    id: string,
+    data: Partial<Pick<Bot, "name" | "interval" | "leverage" | "params" | "is_enabled">> & { options?: BotOptions }
+  ) => patch<Bot>(`/bots/${id}`, data),
   deleteBot: (id: string) => del(`/bots/${id}`),
   botAction: (id: string, action: "start" | "pause" | "resume" | "stop" | "reset-state") =>
     post<Bot>(`/bots/${id}/${action}`),
@@ -185,6 +190,10 @@ export const api = {
   equity: (params?: Query) => request<EquityPoint[]>(`/history/equity${qs(params)}`),
   positions: (params?: Query) => request<(PositionOut & { account_id: string })[]>(`/history/positions${qs(params)}`),
   audit: (params?: Query) => request<Page<AuditEntry>>(`/history/audit${qs(params)}`),
+
+  // scanner
+  scanner: (params?: Query) => request<ScannerResponse>(`/scanner/${qs(params)}`),
+  refreshScanner: () => post<{ queued: boolean }>("/scanner/refresh"),
 
   // monitoring / alerts
   monitoringStatus: () => request<MonitoringStatus>("/monitoring/status"),
