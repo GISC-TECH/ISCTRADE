@@ -21,6 +21,7 @@ from app.services.news.calendar import load_events
 from app.services.news.gate import GateDecision, aggregate, event_gate, news_gate
 from app.services.news.store import load_signals
 from app.strategy.base import StrategyParamError
+from app.strategy.presets import list_presets
 from app.strategy.strategies import build_strategy, list_strategies
 
 router = APIRouter()
@@ -35,6 +36,12 @@ def market_client_factory(testnet: bool) -> ExchangeAdapter:
 async def get_strategies(user: User = Depends(get_current_user)) -> list[dict]:
     """Estratégias disponíveis e seus parâmetros."""
     return list_strategies()
+
+
+@router.get("/presets")
+async def get_presets(user: User = Depends(get_current_user)) -> list[dict]:
+    """Robôs prontos: estratégia + timeframe + parâmetros + opções de risco/notícias (sempre em modo paper)."""
+    return list_presets()
 
 
 async def build_backtest_gate(db: AsyncSession, req, candles) -> tuple[Any, dict[str, Any]]:
