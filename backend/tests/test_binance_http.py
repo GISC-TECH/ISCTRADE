@@ -102,3 +102,22 @@ async def test_soft_limit_waits_for_next_window_when_short(monkeypatch) -> None:
         await c.ping()
         await c.get_klines("BTCUSDT")
     assert len(slept) == 1 and 0 < slept[0] <= 60.5
+
+
+async def test_exchange_info_is_cached_for_pooled_clients(monkeypatch) -> None:
+    import app.services.binance_client as bc
+
+    calls = []
+
+    async def fake_request(self, method, path, params=None, signed=False, api_key_only=False):
+        calls.append(path)
+        return {"symbols": [{"symbol": "BTCUSDT", "filters": []}]}
+
+    monkeypatch.setattr(bc.BinanceFuturesClient, "_request", fake_request)
+    monkeypatch.setattr(bc, "_exchange_info_raw", {})
+    monkeypatch.setattr(bc, "_exchange_info_cache", {})
+    a, b = BinanceFuturesClient("", "", testnet=True), BinanceFuturesClient("", "", testnet=True)
+    assert (await a.get_exchange_info())["symbols"][0]["symbol"] == "BTCUSDT"
+    await b.get_exchange_info()
+    assert (await b.get_symbol_filters("BTCUSDT")).symbol == "BTCUSDT"
+    assert calls == ["/fapi/v1/exchangeInfo"]  # one download shared by scanner and filters

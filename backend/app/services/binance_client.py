@@ -38,6 +38,10 @@ NO_CHANGE_CODES = {-4046, -4059}  # margin type / position side unchanged
 
 _exchange_info_cache: dict[str, tuple[float, dict[str, SymbolFilters]]] = {}
 EXCHANGE_INFO_TTL = 3600.0
+# Raw /fapi/v1/exchangeInfo (~1 MB JSON for USDT-M) is shared by the scanner and symbol filters; listings change
+# rarely, so one download per 15 min per process is enough. Only for pooled clients (mocked transports bypass it).
+EXCHANGE_INFO_RAW_TTL = 900.0
+_exchange_info_raw: dict[str, tuple[float, dict]] = {}
 
 
 def _fmt(value: Decimal | float | str | None) -> str | None:
@@ -208,7 +212,14 @@ class BinanceFuturesClient(ExchangeAdapter):
         return self.time_offset_ms
 
     async def get_exchange_info(self) -> dict:
-        return await self._request("GET", "/fapi/v1/exchangeInfo")
+        if self._own_client is not None:
+            return await self._request("GET", "/fapi/v1/exchangeInfo")
+        cached = _exchange_info_raw.get(self.base_url)
+        if cached is not None and time.monotonic() - cached[0] <= EXCHANGE_INFO_RAW_TTL:
+            return cached[1]
+        info = await self._request("GET", "/fapi/v1/exchangeInfo")
+        _exchange_info_raw[self.base_url] = (time.monotonic(), info)
+        return info
 
     async def get_symbol_filters(self, symbol: str) -> SymbolFilters:
         cached = _exchange_info_cache.get(self.base_url)
