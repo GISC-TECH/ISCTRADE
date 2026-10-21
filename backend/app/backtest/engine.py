@@ -13,6 +13,7 @@ Execution model (documented assumptions):
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -20,6 +21,7 @@ from typing import Any
 
 from app.backtest.data import interval_ms
 from app.models.enums import OrderSide
+from app.services.news.gate import GateDecision, apply_multiplier
 from app.services.position_math import apply_fill, stop_triggered
 from app.services.risk_manager import AccountRiskState, OrderRequest, RiskManager
 from app.services.symbol_filters import SymbolFilters, default_filters
@@ -115,9 +117,20 @@ def downsample(points: list[dict[str, Any]], max_points: int) -> list[dict[str, 
     return out
 
 
+EntryGate = Callable[[OrderIntent, Candle], GateDecision]
+
+
 class BacktestEngine:
-    def __init__(self, strategy: Strategy, symbol: str, interval: str, config: BacktestConfig | None = None) -> None:
+    def __init__(
+        self,
+        strategy: Strategy,
+        symbol: str,
+        interval: str,
+        config: BacktestConfig | None = None,
+        entry_gate: EntryGate | None = None,
+    ) -> None:
         self.strategy = strategy
+        self.entry_gate = entry_gate  # optional news/event filter (same logic as the live bots)
         self.symbol = symbol
         self.interval = interval
         self.cfg = config or BacktestConfig()
@@ -250,6 +263,13 @@ class BacktestEngine:
             # 4. strategy
             ctx = self._ctx(candles, i, lookback, close, state)
             for intent in self.strategy.on_candle(ctx):
+                if self.entry_gate is not None and not intent.reduce_only:
+                    decision = self.entry_gate(intent, candle)
+                    if decision.block:
+                        self._reject(decision.block.split(":", 1)[0])
+                        self.strategy.on_result(intent, False, ctx)
+                        continue
+                    intent = apply_multiplier(intent, decision.multiplier)
                 ok = self._execute_intent(intent, candle, self.equity(close))
                 self.strategy.on_result(intent, ok, ctx)
                 ctx.position_qty, ctx.position_entry = self.qty, self.entry
@@ -337,6 +357,11 @@ def compute_metrics(
 
 
 def run_backtest(
-    strategy: Strategy, candles: list[Candle], symbol: str, interval: str, config: BacktestConfig | None = None
+    strategy: Strategy,
+    candles: list[Candle],
+    symbol: str,
+    interval: str,
+    config: BacktestConfig | None = None,
+    entry_gate: EntryGate | None = None,
 ) -> BacktestResult:
-    return BacktestEngine(strategy, symbol, interval, config).run(candles)
+    return BacktestEngine(strategy, symbol, interval, config, entry_gate).run(candles)

@@ -8,6 +8,7 @@ from app.api.v1.endpoints import (
     bots,
     history,
     monitoring,
+    news,
     scanner,
     strategies,
     workspaces,
@@ -24,3 +25,5 @@ api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(alerts.router, prefix="/alerts", tags=["alerts"])
 api_router.include_router(monitoring.router, prefix="/monitoring", tags=["monitoring"])
 api_router.include_router(scanner.router, prefix="/scanner", tags=["scanner"])
+api_router.include_router(news.router, prefix="/news", tags=["news"])
+api_router.include_router(news.calendar_router, prefix="/calendar", tags=["calendar"])

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models import Account, AccountStatus, BotConfig, BotState, ExecutionMode, OrderSide
 from app.models.base import utcnow
 from app.schemas.bot_options import BotOptions
@@ -24,6 +26,9 @@ from app.services.execution import (
 )
 from app.services.kill_switch import trigger_account_kill_switch
 from app.services.market_data import MarketData
+from app.services.news.calendar import events_around
+from app.services.news.gate import AssetSentiment, GateDecision, aggregate, apply_multiplier, event_gate, news_gate
+from app.services.news.store import load_signals
 from app.services.position_math import stop_triggered
 from app.services.risk_manager import RiskManager
 from app.services.symbol_filters import SymbolFilters
@@ -62,6 +67,10 @@ class BotRunner:
         self.rm = risk_manager or RiskManager()
         self.filters = filters
         self.orders = OrderService(self.executor, self.rm)
+        self.now = datetime.now(UTC)
+        self._event_decision = GateDecision()
+        self._signals = None
+        self._sentiments: dict[str, AssetSentiment] = {}
 
     @property
     def client(self):
@@ -88,6 +97,7 @@ class BotRunner:
 
         opts = BotOptions.load(bot.options)
         runtime = dict(bot.runtime or {})
+        await self._update_event_pause(opts, runtime)
         auto = opts.auto_symbols.enabled
         sym_states: dict[str, dict] = dict(runtime.get("symbols") or {}) if auto else {}
         symbols = await self._auto_symbols(opts, sym_states) if auto else [bot.symbol]
@@ -143,17 +153,59 @@ class BotRunner:
                 n += 1
         return n
 
-    async def _entry_block(
+    async def _update_event_pause(self, opts: BotOptions, runtime: dict) -> None:
+        """Evaluate the economic-event pause once per tick; audit/alert when a pause starts."""
+        if not opts.event_pause.enabled:
+            self._event_decision = GateDecision()
+            return
+        events = await events_around(self.db, self.now)
+        decision, ev = event_gate(events, self.now, opts.event_pause)
+        self._event_decision = decision
+        marker = runtime.get("event_pause")
+        if decision.block and ev is not None and marker != ev.key:
+            runtime["event_pause"] = ev.key
+            self.bot.runtime = {**(self.bot.runtime or {}), "event_pause": ev.key}
+            until = ev.time + timedelta(minutes=opts.event_pause.minutes_after)
+            await log_event(
+                self.db, "bot.event_pause", workspace_id=self.bot.workspace_id, account_id=self.bot.account_id,
+                bot_id=self.bot.id, bot=self.bot.name, event_id=ev.key, event_title=f"{ev.title} ({ev.country})",
+                time=ev.time.strftime("%d/%m %H:%M UTC"), until=until.strftime("%d/%m %H:%M UTC"),
+            )  # fmt: skip
+        elif not decision.block and marker:
+            runtime.pop("event_pause", None)
+            self.bot.runtime = {k: v for k, v in (self.bot.runtime or {}).items() if k != "event_pause"}
+
+    async def _sentiment(self, symbol: str, opts: BotOptions) -> AssetSentiment:
+        if self._signals is None:
+            window = settings.NEWS_SENTIMENT_WINDOW_HOURS
+            self._signals = await load_signals(self.db, self.now - timedelta(hours=window), self.now)
+        if symbol not in self._sentiments:
+            self._sentiments[symbol] = aggregate(
+                self._signals, symbol, self.now, settings.NEWS_SENTIMENT_HALF_LIFE_HOURS,
+                settings.NEWS_SENTIMENT_WINDOW_HOURS, opts.news_filter.high_impact_minutes,
+            )  # fmt: skip
+        return self._sentiments[symbol]
+
+    async def _entry_gate(
         self, symbol: str, intent, auto: bool, opts: BotOptions, sym_states: dict[str, dict]
-    ) -> str | None:
-        """Bot-level gates for NEW exposure (reduce-only exits always pass). Returns a reason or None."""
+    ) -> GateDecision:
+        """Bot-level gates for NEW exposure (reduce-only exits always pass): position limit, event pause, news.
+
+        Gates can only block or shrink an entry; they never create one. The RiskManager still validates
+        every order that passes.
+        """
         if intent.reduce_only:
-            return None
+            return GateDecision()
         if auto:
             managed = [s for s in {*sym_states, symbol} if s != symbol]
             if await self._open_positions(managed) >= opts.auto_symbols.max_positions:
-                return "max_concurrent_positions"
-        return None
+                return GateDecision("max_concurrent_positions")
+        decision = self._event_decision
+        if decision.block:
+            return decision
+        if opts.news_filter.mode != "off":
+            decision = decision.merge(news_gate(intent.side, await self._sentiment(symbol, opts), opts.news_filter))
+        return decision
 
     async def _tick_symbol(
         self,
@@ -228,12 +280,18 @@ class BotRunner:
             candles, pos.quantity if pos else Decimal(0), pos.entry_price if pos else Decimal(0), equity, state, symbol
         )
         for intent in strategy.on_candle(ctx):
-            block = await self._entry_block(symbol, intent, auto, opts, sym_states)
-            if block:
+            gate = await self._entry_gate(symbol, intent, auto, opts, sym_states)
+            if gate.block:
                 strategy.on_result(intent, False, ctx)
                 result.rejected += 1
-                result.reasons.append(block)
+                result.reasons.append(gate.block)
+                if gate.block != "max_concurrent_positions":
+                    await log_event(
+                        self.db, "bot.entry_filtered", workspace_id=account.workspace_id, account_id=account.id,
+                        bot_id=bot.id, symbol=symbol, side=intent.side, reason=gate.block,
+                    )  # fmt: skip
                 continue
+            intent = apply_multiplier(intent, gate.multiplier)
             res = await self.orders.submit(
                 self.db, account, intent, symbol=symbol, ref_price=price, leverage=bot.leverage,
                 risk_state=risk_state, bot=bot, filters=filters,

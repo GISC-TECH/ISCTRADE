@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import BacktestStatus
+from app.schemas.bot_options import EventPauseOptions, NewsFilterOptions
 
 SYMBOL_PATTERN = r"^[A-Z0-9]{2,20}$"
 
@@ -21,6 +22,17 @@ class BacktestConfigIn(BaseModel):
     stop_on_kill_switch: bool = True
 
 
+class BacktestFiltersIn(BaseModel):
+    """Optional news filter / event pause replayed from the news and events stored in the database.
+
+    Only news collected since the ingestion started is available (no historical news archive), so
+    older periods run effectively unfiltered; leave both off for a pure strategy backtest.
+    """
+
+    news_filter: NewsFilterOptions = Field(default_factory=NewsFilterOptions)
+    event_pause: EventPauseOptions = Field(default_factory=EventPauseOptions)
+
+
 class BacktestRequest(BaseModel):
     strategy_key: str
     params: dict[str, Any] = Field(default_factory=dict)
@@ -31,6 +43,7 @@ class BacktestRequest(BaseModel):
     candles_csv: str | None = Field(None, max_length=10_000_000)
     use_testnet_data: bool = False
     config: BacktestConfigIn = Field(default_factory=BacktestConfigIn)
+    filters: BacktestFiltersIn = Field(default_factory=BacktestFiltersIn)
 
     @model_validator(mode="after")
     def _source(self) -> "BacktestRequest":
