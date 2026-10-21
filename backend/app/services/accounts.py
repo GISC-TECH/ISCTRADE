@@ -1,16 +1,12 @@
-"""Account helpers: decrypting credentials into a Binance client."""
+"""Account helpers: decrypting credentials into the account's exchange adapter."""
 
 from __future__ import annotations
 
-from app.core.security import decrypt_api_key
+from app.exchanges.base import ExchangeAdapter
+from app.exchanges.registry import adapter_for_account
 from app.models import Account
-from app.services.binance_client import BinanceFuturesClient
 
 
-def client_for_account(account: Account) -> BinanceFuturesClient:
-    aad = str(account.workspace_id).encode()
-    return BinanceFuturesClient(
-        api_key=decrypt_api_key(account.encrypted_api_key, aad),
-        api_secret=decrypt_api_key(account.encrypted_api_secret, aad),
-        testnet=account.is_testnet,
-    )
+def client_for_account(account: Account) -> ExchangeAdapter:
+    """Signed adapter for ``account.exchange`` (Binance USDT-M by default). See ``app.exchanges.registry``."""
+    return adapter_for_account(account)

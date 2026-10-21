@@ -2,13 +2,14 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import AccountStatus, ExecutionMode
 
 
 class AccountCreate(BaseModel):
     label: str = Field(min_length=1, max_length=120)
+    exchange: str = Field("binance_usdm", min_length=1, max_length=32)
     api_key: str = Field(min_length=8, max_length=256)
     api_secret: str = Field(min_length=8, max_length=256)
     is_testnet: bool = True
@@ -18,6 +19,15 @@ class AccountCreate(BaseModel):
     max_risk_per_trade_pct: Decimal = Field(Decimal("1"), gt=0, le=100)
     max_daily_loss_pct: Decimal = Field(Decimal("3"), gt=0, le=100)
     max_drawdown_pct: Decimal = Field(Decimal("15"), gt=0, le=100)
+
+    @field_validator("exchange")
+    @classmethod
+    def _known_exchange(cls, value: str) -> str:
+        from app.exchanges.registry import available_exchanges
+
+        if value not in available_exchanges():
+            raise ValueError(f"exchange indisponível: {value}")
+        return value
 
 
 class AccountUpdate(BaseModel):
@@ -38,6 +48,7 @@ class AccountRead(BaseModel):
     id: uuid.UUID
     workspace_id: uuid.UUID
     label: str
+    exchange: str = "binance_usdm"
     api_key_last4: str
     is_testnet: bool
     execution_mode: ExecutionMode
@@ -82,6 +93,16 @@ class AccountDashboard(BaseModel):
     day_start_equity: Decimal | None = None
     drawdown_pct: float = 0.0
     error: str | None = None
+
+
+class ExchangeInfoOut(BaseModel):
+    id: str
+    name: str
+    experimental: bool
+    testnet: bool
+    user_data_stream: bool
+    market_streams: bool
+    notes: list[str] = []
 
 
 class AccountVerifyResult(BaseModel):

@@ -15,9 +15,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics import RECONCILER_CHANGES, safe_inc
+from app.exchanges.base import ERR_ORDER_NOT_FOUND, ExchangeAdapter, ExchangeAPIError
 from app.models import Account, Order, OrderSide, OrderStatus, Position, Trade
 from app.services.audit import log_event
-from app.services.binance_client import BinanceAPIError, BinanceFuturesClient
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def _ms_to_dt(ms: int | str) -> datetime:
 
 
 class Reconciler:
-    def __init__(self, db: AsyncSession, account: Account, client: BinanceFuturesClient) -> None:
+    def __init__(self, db: AsyncSession, account: Account, client: ExchangeAdapter) -> None:
         self.db = db
         self.account = account
         self.client = client
@@ -77,8 +77,8 @@ class Reconciler:
         for order in rows:
             try:
                 remote = await self.client.get_order(order.symbol, client_order_id=order.client_order_id)
-            except BinanceAPIError as exc:
-                if exc.code == -2013:  # order does not exist
+            except ExchangeAPIError as exc:
+                if exc.code == ERR_ORDER_NOT_FOUND:  # order does not exist
                     order.status = OrderStatus.REJECTED
                     order.reason = (order.reason or "") + " | not found on exchange"
                     updated += 1

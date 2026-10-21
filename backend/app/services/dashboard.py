@@ -10,8 +10,8 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.exchanges.base import ExchangeAdapter, ExchangeAPIError
 from app.models import Account, ExecutionMode, Trade
-from app.services.binance_client import BinanceAPIError, BinanceFuturesClient
 from app.services.equity import open_positions, paper_equity
 
 logger = logging.getLogger(__name__)
@@ -25,9 +25,7 @@ def _pct(part: Decimal, whole: Decimal | None) -> float:
     return float(part / whole * 100) if whole else 0.0
 
 
-async def build_dashboard(
-    db: AsyncSession, account: Account, client: BinanceFuturesClient | None = None
-) -> dict[str, Any]:
+async def build_dashboard(db: AsyncSession, account: Account, client: ExchangeAdapter | None = None) -> dict[str, Any]:
     base: dict[str, Any] = {
         "account_id": account.id,
         "status": account.status,
@@ -41,7 +39,7 @@ async def build_dashboard(
     if account.execution_mode == ExecutionMode.LIVE and client is not None:
         try:
             return {**base, **(await _exchange_data(client))}
-        except (BinanceAPIError, OSError, Exception) as exc:  # show last known paper/db data + error
+        except (ExchangeAPIError, OSError, Exception) as exc:  # show last known paper/db data + error
             logger.warning("dashboard exchange fetch failed: %s", exc)
             base["error"] = f"Falha ao consultar a Binance: {exc}"[:300]
     return {**base, **(await _paper_data(db, account))}
@@ -83,7 +81,7 @@ async def _paper_data(db: AsyncSession, account: Account) -> dict[str, Any]:
     }
 
 
-async def _exchange_data(client: BinanceFuturesClient) -> dict[str, Any]:
+async def _exchange_data(client: ExchangeAdapter) -> dict[str, Any]:
     acc = await client.get_account()
     raw_positions = [p for p in acc.get("positions", []) if Decimal(str(p.get("positionAmt", "0"))) != 0]
     if not raw_positions:

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.metrics import ORDERS, reason_label, safe_inc
+from app.exchanges.base import ExchangeAdapter
 from app.models import (
     Account,
     BotConfig,
@@ -36,7 +37,6 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.services.audit import log_event
-from app.services.binance_client import BinanceFuturesClient
 from app.services.position_math import apply_fill
 from app.services.risk_manager import AccountRiskState, OrderRequest, RiskManager
 from app.services.symbol_filters import SymbolFilters, default_filters
@@ -233,11 +233,11 @@ class PaperExecutor:
 
 
 class LiveExecutor:
-    """Sends real MARKET orders (and a protective STOP_MARKET) to Binance USDT-M Futures."""
+    """Sends real MARKET orders (and a protective STOP_MARKET) through the account's exchange adapter."""
 
     is_paper = False
 
-    def __init__(self, client: BinanceFuturesClient) -> None:
+    def __init__(self, client: ExchangeAdapter) -> None:
         if not settings.LIVE_TRADING_ENABLED:
             raise LiveTradingDisabled("LIVE_TRADING_ENABLED is false; refusing to create a live executor")
         self.client = client

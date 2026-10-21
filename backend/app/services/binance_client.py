@@ -16,16 +16,13 @@ from urllib.parse import urlencode
 import httpx
 
 from app.core.config import settings
+from app.exchanges.base import ExchangeAdapter, ExchangeAPIError, ExchangeCapabilities, StreamHandler
 from app.services.binance_http import DEFAULT_TIMEOUT, rate_limits, shared_client
 from app.services.symbol_filters import SymbolFilters
 
 
-class BinanceAPIError(Exception):
-    def __init__(self, status_code: int, code: int | None, message: str):
-        super().__init__(f"[{status_code}] {code}: {message}")
-        self.status_code = status_code
-        self.code = code
-        self.message = message
+class BinanceAPIError(ExchangeAPIError):
+    """Binance error. Its codes *are* the canonical codes (see ``app.exchanges.base``)."""
 
 
 # Error codes that mean "nothing to change" for idempotent setters.
@@ -43,7 +40,17 @@ def _fmt(value: Decimal | float | str | None) -> str | None:
     return str(value)
 
 
-class BinanceFuturesClient:
+class BinanceFuturesClient(ExchangeAdapter):
+    """Binance USDT-M Futures adapter (registry id ``binance_usdm``)."""
+
+    exchange_id = "binance_usdm"
+    display_name = "Binance USDT-M Futures"
+    experimental = False
+    capabilities = ExchangeCapabilities(
+        perpetual_futures=True, testnet=True, hedge_mode=True, user_data_stream=True, market_streams=True,
+        test_order=True, quote_assets=("USDT", "USDC"),
+    )  # fmt: skip
+
     def __init__(
         self,
         api_key: str,
@@ -189,6 +196,15 @@ class BinanceFuturesClient:
         data = await self._request("GET", "/fapi/v1/ticker/price", {"symbol": symbol})
         return Decimal(str(data["price"]))
 
+    async def get_funding_rate_history(
+        self, symbol: str, start_time: int | None = None, end_time: int | None = None, limit: int = 100
+    ) -> list[dict]:
+        return await self._request(
+            "GET",
+            "/fapi/v1/fundingRate",
+            {"symbol": symbol, "startTime": start_time, "endTime": end_time, "limit": limit},
+        )
+
     # ------------------------------------------------------------------ #
     # Account (signed)
     async def get_account(self) -> dict:
@@ -330,3 +346,16 @@ class BinanceFuturesClient:
 
     async def close_listen_key(self) -> dict:
         return await self._request("DELETE", "/fapi/v1/listenKey", api_key_only=True)
+
+    # ------------------------------------------------------------------ #
+    # Streams (see app.services.binance_ws)
+    def user_data_stream(self, handler: StreamHandler, **kw: Any):
+        from app.services.binance_ws import UserDataStream
+
+        return UserDataStream(self, handler, **kw)
+
+    @classmethod
+    def market_stream(cls, streams: list[str], handler: StreamHandler, *, testnet: bool = True, **kw: Any):
+        from app.services.binance_ws import MarketStream
+
+        return MarketStream(streams, handler, testnet=testnet, **kw)

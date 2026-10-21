@@ -1,4 +1,7 @@
-"""Binance Futures account connected to a workspace. Credentials stored encrypted (AES-256-GCM)."""
+"""Exchange account (Binance USDT-M Futures by default) connected to a workspace.
+
+Credentials stored encrypted (AES-256-GCM). ``exchange`` selects the adapter (``app.exchanges.registry``).
+"""
 
 from __future__ import annotations
 
@@ -23,6 +26,9 @@ class Account(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
     label: Mapped[str] = mapped_column(String(120), nullable=False)
+    exchange: Mapped[str] = mapped_column(
+        String(32), default="binance_usdm", server_default="binance_usdm", nullable=False
+    )
     encrypted_api_key: Mapped[str] = mapped_column(Text, nullable=False)
     encrypted_api_secret: Mapped[str] = mapped_column(Text, nullable=False)
     api_key_last4: Mapped[str] = mapped_column(String(4), nullable=False)

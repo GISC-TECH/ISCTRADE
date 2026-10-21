@@ -6,7 +6,7 @@ import csv
 import io
 from datetime import datetime
 
-from app.services.binance_client import BinanceFuturesClient
+from app.exchanges.base import ExchangeAdapter
 from app.strategy.base import Candle
 
 INTERVAL_MS = {
@@ -84,7 +84,7 @@ def load_csv(text: str, interval: str = "1h") -> list[Candle]:
 
 
 async def fetch_candles(
-    client: BinanceFuturesClient, symbol: str, interval: str, start: datetime, end: datetime
+    client: ExchangeAdapter, symbol: str, interval: str, start: datetime, end: datetime
 ) -> list[Candle]:
     start_ms, end_ms = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
     if end_ms <= start_ms:

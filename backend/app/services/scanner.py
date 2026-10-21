@@ -26,8 +26,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.redis import get_redis
+from app.exchanges.base import ExchangeAdapter
+from app.exchanges.registry import public_adapter
 from app.models.scanner import MarketScan
-from app.services.binance_client import BinanceFuturesClient
 from app.strategy.base import Candle
 from app.strategy.indicators import adx, atr, rsi, sma
 from app.strategy.strategies import build_strategy, entry_signal
@@ -86,7 +87,7 @@ def perpetual_usdt_symbols(exchange_info: dict) -> set[str]:
     }
 
 
-async def get_klines_cached(client: BinanceFuturesClient, symbol: str, interval: str, limit: int) -> list[Candle]:
+async def get_klines_cached(client: ExchangeAdapter, symbol: str, interval: str, limit: int) -> list[Candle]:
     """Closed candles, cached for SCANNER_KLINES_CACHE_SECONDS (Redis, else process memory)."""
     key = f"scanner:klines:{'t' if client.testnet else 'm'}:{symbol}:{interval}:{limit}"
     ttl = settings.SCANNER_KLINES_CACHE_SECONDS
@@ -184,10 +185,10 @@ def analyse(
     }
 
 
-async def run_scan(client: BinanceFuturesClient | None = None, params: ScanParams | None = None) -> dict[str, Any]:
+async def run_scan(client: ExchangeAdapter | None = None, params: ScanParams | None = None) -> dict[str, Any]:
     params = params or ScanParams()
     own = client is None
-    client = client or BinanceFuturesClient("", "", testnet=params.testnet)
+    client = client or public_adapter(params.testnet)
     started = time.perf_counter()
     errors: list[str] = []
     try:
@@ -234,7 +235,7 @@ async def run_scan(client: BinanceFuturesClient | None = None, params: ScanParam
 
 
 async def run_and_store(
-    sessions: async_sessionmaker[AsyncSession], client: BinanceFuturesClient | None = None
+    sessions: async_sessionmaker[AsyncSession], client: ExchangeAdapter | None = None
 ) -> dict[str, Any]:
     params = ScanParams()
     out = await run_scan(client, params)

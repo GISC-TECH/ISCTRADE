@@ -6,7 +6,8 @@ import time
 from decimal import Decimal
 from typing import Protocol
 
-from app.services.binance_client import BinanceFuturesClient
+from app.exchanges.base import ExchangeAdapter
+from app.exchanges.registry import public_adapter
 from app.strategy.base import Candle
 
 
@@ -19,8 +20,8 @@ class MarketData(Protocol):
 class BinanceMarketData:
     """Public market data (no API keys needed). Uses testnet or mainnet endpoints."""
 
-    def __init__(self, testnet: bool = True, client: BinanceFuturesClient | None = None) -> None:
-        self._client = client or BinanceFuturesClient(api_key="", api_secret="", testnet=testnet)
+    def __init__(self, testnet: bool = True, client: ExchangeAdapter | None = None) -> None:
+        self._client = client or public_adapter(testnet)
         self._owns_client = client is None
 
     async def get_closed_candles(self, symbol: str, interval: str, limit: int = 300) -> list[Candle]:

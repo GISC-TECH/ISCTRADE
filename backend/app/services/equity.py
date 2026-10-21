@@ -9,9 +9,9 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.exchanges.base import ExchangeAdapter
 from app.models import Account, EquitySnapshot, ExecutionMode, Position
 from app.models.base import as_utc, utcnow
-from app.services.binance_client import BinanceFuturesClient
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,7 @@ async def paper_equity(db: AsyncSession, account: Account) -> EquityState:
     return EquityState(wallet, unrealized, wallet + unrealized - margin)
 
 
-async def live_equity(client: BinanceFuturesClient) -> EquityState:
+async def live_equity(client: ExchangeAdapter) -> EquityState:
     data = await client.get_account()
     return EquityState(
         wallet_balance=Decimal(str(data.get("totalWalletBalance", "0"))),
@@ -57,7 +57,7 @@ async def live_equity(client: BinanceFuturesClient) -> EquityState:
     )
 
 
-async def compute_equity(db: AsyncSession, account: Account, client: BinanceFuturesClient | None = None) -> EquityState:
+async def compute_equity(db: AsyncSession, account: Account, client: ExchangeAdapter | None = None) -> EquityState:
     if account.execution_mode == ExecutionMode.LIVE and client is not None:
         return await live_equity(client)
     return await paper_equity(db, account)
@@ -76,9 +76,7 @@ def roll_risk_baselines(account: Account, equity: Decimal, now: datetime | None 
     account.last_synced_at = now
 
 
-async def take_snapshot(
-    db: AsyncSession, account: Account, client: BinanceFuturesClient | None = None
-) -> EquitySnapshot:
+async def take_snapshot(db: AsyncSession, account: Account, client: ExchangeAdapter | None = None) -> EquitySnapshot:
     state = await compute_equity(db, account, client)
     roll_risk_baselines(account, state.equity)
     snap = EquitySnapshot(

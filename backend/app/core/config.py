@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     BINANCE_WEIGHT_SOFT_PCT: float = 90.0
     BINANCE_WEIGHT_MAX_WAIT_SECONDS: float = 15.0
 
+    # Exchange adapters (app/exchanges). Experimental adapters (e.g. Bybit) are refused by the registry
+    # unless explicitly enabled; they are skeletons for development on testnet only.
+    EXPERIMENTAL_EXCHANGES_ENABLED: bool = False
+    BYBIT_API_URL: str = "https://api.bybit.com"
+    BYBIT_TESTNET_API_URL: str = "https://api-testnet.bybit.com"
+    BYBIT_RECV_WINDOW: int = 5000
+
     # CORS (comma-separated list)
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
 

@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.exchanges.registry import public_adapter
 from app.models import (
     Account,
     AccountStatus,
@@ -33,7 +34,6 @@ from app.models import (
 from app.services import accounts as accounts_service
 from app.services import prices
 from app.services.audit import log_event
-from app.services.binance_client import BinanceFuturesClient
 from app.services.equity import compute_equity, open_positions, refresh_paper_marks, roll_risk_baselines
 from app.services.execution import (
     ExecutionResult,
@@ -67,7 +67,7 @@ async def _default_filters(symbol: str, testnet: bool) -> SymbolFilters:
     if cached and time.monotonic() - cached[0] < _FILTERS_TTL:
         return cached[1]
     try:
-        async with BinanceFuturesClient("", "", testnet=testnet) as client:
+        async with public_adapter(testnet) as client:
             filters = await client.get_symbol_filters(symbol)
     except Exception as exc:
         logger.warning("symbol filters unavailable for %s (%s); using defaults", symbol, type(exc).__name__)

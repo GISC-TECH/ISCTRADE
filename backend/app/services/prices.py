@@ -42,10 +42,10 @@ async def get_price(symbol: str, testnet: bool) -> Decimal | None:
             return Decimal(value)
     except Exception:  # pragma: no cover
         pass
-    from app.services.binance_client import BinanceFuturesClient
+    from app.exchanges.registry import public_adapter
 
     try:
-        async with BinanceFuturesClient("", "", testnet=testnet) as client:
+        async with public_adapter(testnet) as client:
             price = Decimal(str((await client.get_mark_price(symbol))["markPrice"]))
         await cache_price(symbol, price, testnet)
         return price

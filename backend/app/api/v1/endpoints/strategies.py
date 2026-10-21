@@ -12,10 +12,11 @@ from app.backtest.data import BacktestDataError, fetch_candles, load_csv
 from app.backtest.engine import BacktestConfig, run_backtest
 from app.core.config import settings
 from app.core.database import get_db
+from app.exchanges.base import ExchangeAdapter, ExchangeAPIError
+from app.exchanges.registry import public_adapter
 from app.models import BacktestRun, BacktestStatus, User, Workspace
 from app.schemas.backtest import BacktestDetail, BacktestRequest, BacktestSummary
 from app.services.audit import log_event
-from app.services.binance_client import BinanceAPIError, BinanceFuturesClient
 from app.services.news.calendar import load_events
 from app.services.news.gate import GateDecision, aggregate, event_gate, news_gate
 from app.services.news.store import load_signals
@@ -25,9 +26,9 @@ from app.strategy.strategies import build_strategy, list_strategies
 router = APIRouter()
 
 
-def market_client_factory(testnet: bool) -> BinanceFuturesClient:
-    """Public market-data client (no API keys). Overridable in tests."""
-    return BinanceFuturesClient(api_key="", api_secret="", testnet=testnet)
+def market_client_factory(testnet: bool) -> ExchangeAdapter:
+    """Public market-data adapter (no API keys). Overridable in tests."""
+    return public_adapter(testnet)
 
 
 @router.get("/")
@@ -81,7 +82,7 @@ async def create_backtest(
                 candles = await fetch_candles(client, req.symbol, req.interval, req.start, req.end)  # type: ignore[arg-type]
     except BacktestDataError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    except BinanceAPIError as exc:
+    except ExchangeAPIError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"Binance: {exc.message}") from exc
     if len(candles) < 2:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="dados insuficientes para o backtest")

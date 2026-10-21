@@ -21,10 +21,11 @@ from app.core.config import settings
 from app.core.database import session_scope
 from app.core.logging import configure_logging
 from app.core.metrics import start_metrics_server
+from app.exchanges.base import ExchangeStream, UnsupportedFeatureError
+from app.exchanges.registry import get_adapter_class
 from app.models import Account, AccountStatus, BotConfig, ExecutionMode
 from app.services import realtime
 from app.services.accounts import client_for_account
-from app.services.binance_ws import MarketStream, UserDataStream
 from app.services.health import write_streams_heartbeat
 from app.services.prices import cache_price
 from app.services.reconciler import Reconciler
@@ -60,8 +61,8 @@ def user_event_summary(event: dict[str, Any]) -> tuple[str, dict[str, Any]] | No
 
 class StreamSupervisor:
     def __init__(self) -> None:
-        self.user_streams: dict[uuid.UUID, tuple[UserDataStream, asyncio.Task]] = {}
-        self.market: dict[bool, tuple[MarketStream, asyncio.Task, frozenset[str]]] = {}
+        self.user_streams: dict[uuid.UUID, tuple[ExchangeStream, asyncio.Task]] = {}
+        self.market: dict[bool, tuple[ExchangeStream, asyncio.Task, frozenset[str]]] = {}
         self.feeds: list[MarketFeed] = []
         self._stop = asyncio.Event()
 
@@ -140,7 +141,9 @@ class StreamSupervisor:
                 task.cancel()
         for acc_id, account in wanted.items():
             if acc_id not in self.user_streams:
-                self.user_streams[acc_id] = self._start_user_stream(account)
+                started = self._start_user_stream(account)
+                if started is not None:
+                    self.user_streams[acc_id] = started
 
         for testnet, syms in symbols.items():
             current = self.market.get(testnet)
@@ -152,7 +155,8 @@ class StreamSupervisor:
                 current[1].cancel()
                 self.market.pop(testnet)
             if syms:
-                stream = MarketStream(
+                # Shared mark-price feed of the default exchange (Binance USDT-M).
+                stream = get_adapter_class().market_stream(
                     [f"{s.lower()}@markPrice@1s" for s in sorted(syms)],
                     self._price_handler(testnet),
                     testnet=testnet,
@@ -167,7 +171,7 @@ class StreamSupervisor:
 
         return handle
 
-    def _start_user_stream(self, account: Account) -> tuple[UserDataStream, asyncio.Task]:
+    def _start_user_stream(self, account: Account) -> tuple[ExchangeStream, asyncio.Task] | None:
         client = client_for_account(account)
         account_id = account.id
         workspace_id = account.workspace_id
@@ -186,7 +190,12 @@ class StreamSupervisor:
                     realtime.message(update[0], {"account_id": account_id, **update[1]}),
                 )
 
-        stream = UserDataStream(client, handle, name=f"user-{account_id}")
+        try:
+            stream = client.user_data_stream(handle, name=f"user-{account_id}")
+        except UnsupportedFeatureError:
+            logger.warning("exchange %s has no user-data stream; skipping account %s", client.exchange_id, account_id)
+            asyncio.ensure_future(client.close())
+            return None
         stream.alert_context = {"workspace_id": account.workspace_id, "account_id": account_id}
         return stream, asyncio.create_task(stream.run())
 

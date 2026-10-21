@@ -9,11 +9,19 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.rate_limiting import client_ip
 from app.core.security import Role, encrypt_api_key
+from app.exchanges.base import ExchangeAPIError
+from app.exchanges.registry import available_exchanges
 from app.models import Account, AccountStatus, BotConfig, BotState, ExecutionMode
-from app.schemas.account import AccountCreate, AccountDashboard, AccountRead, AccountUpdate, AccountVerifyResult
+from app.schemas.account import (
+    AccountCreate,
+    AccountDashboard,
+    AccountRead,
+    AccountUpdate,
+    AccountVerifyResult,
+    ExchangeInfoOut,
+)
 from app.services.accounts import client_for_account
 from app.services.audit import log_event
-from app.services.binance_client import BinanceAPIError
 from app.services.dashboard import build_dashboard
 from app.services.dispatch import enqueue
 from app.services.execution import is_global_kill_switch_on
@@ -34,6 +42,19 @@ async def get_account_in_workspace(account_id: uuid.UUID, ctx: WorkspaceContext,
 def _check_live_allowed(mode: ExecutionMode | None, ctx: WorkspaceContext) -> None:
     if mode == ExecutionMode.LIVE:
         ctx.require(Role.ADMIN)
+
+
+@router.get("/exchanges", response_model=list[ExchangeInfoOut])
+async def list_exchanges(_: WorkspaceContext = Depends(get_workspace_context)) -> list[ExchangeInfoOut]:
+    """Exchanges habilitadas para novas contas (adaptadores experimentais só com EXPERIMENTAL_EXCHANGES_ENABLED)."""
+    return [
+        ExchangeInfoOut(
+            id=key, name=cls.display_name, experimental=cls.experimental, testnet=cls.capabilities.testnet,
+            user_data_stream=cls.capabilities.user_data_stream, market_streams=cls.capabilities.market_streams,
+            notes=list(cls.capabilities.notes),
+        )
+        for key, cls in available_exchanges().items()
+    ]  # fmt: skip
 
 
 @router.get("/", response_model=list[AccountRead])
@@ -59,6 +80,7 @@ async def connect_account(
     account = Account(
         workspace_id=ctx.workspace.id,
         label=data.label,
+        exchange=data.exchange,
         encrypted_api_key=encrypt_api_key(data.api_key, aad),
         encrypted_api_secret=encrypt_api_key(data.api_secret, aad),
         api_key_last4=data.api_key[-4:],
@@ -75,7 +97,8 @@ async def connect_account(
     await db.flush()
     await log_event(
         db, "account.connected", user_id=ctx.user.id, workspace_id=ctx.workspace.id, account_id=account.id,
-        ip_address=client_ip(request), label=data.label, testnet=data.is_testnet, mode=data.execution_mode,
+        ip_address=client_ip(request), label=data.label, exchange=data.exchange, testnet=data.is_testnet,
+        mode=data.execution_mode,
     )  # fmt: skip
     await db.commit()
     await db.refresh(account)
@@ -152,7 +175,7 @@ async def verify_account(
     try:
         async with client_for_account(account) as client:
             data = await client.get_account()
-    except BinanceAPIError as exc:
+    except ExchangeAPIError as exc:
         return AccountVerifyResult(ok=False, error=exc.message)
     except Exception as exc:
         return AccountVerifyResult(ok=False, error=str(exc)[:200])

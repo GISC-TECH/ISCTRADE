@@ -6,12 +6,13 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.api.deps import WorkspaceContext, get_workspace_context
-from app.services.binance_client import BinanceFuturesClient
+from app.exchanges.base import ExchangeAdapter
+from app.exchanges.registry import public_adapter
 
 
-def market_client(testnet: bool) -> BinanceFuturesClient:
-    """Public (unsigned) client; replaced in tests."""
-    return BinanceFuturesClient(api_key="", api_secret="", testnet=testnet)
+def market_client(testnet: bool) -> ExchangeAdapter:
+    """Public (unsigned) adapter of the default exchange; replaced in tests."""
+    return public_adapter(testnet)
 
 
 router = APIRouter()
