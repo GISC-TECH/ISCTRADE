@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
@@ -44,6 +45,29 @@ def _check_live_allowed(mode: ExecutionMode | None, ctx: WorkspaceContext) -> No
         ctx.require(Role.ADMIN)
 
 
+RISK_FIELDS = ("max_leverage", "max_risk_per_trade_pct", "max_daily_loss_pct", "max_drawdown_pct")
+
+
+def _default_risk_limits() -> dict[str, Decimal]:
+    return {
+        "max_leverage": Decimal(settings.RISK_MAX_LEVERAGE),
+        "max_risk_per_trade_pct": Decimal(str(settings.RISK_MAX_RISK_PER_TRADE_PCT)),
+        "max_daily_loss_pct": Decimal(str(settings.RISK_MAX_DAILY_LOSS_PCT)),
+        "max_drawdown_pct": Decimal(str(settings.RISK_MAX_DRAWDOWN_PCT)),
+    }
+
+
+def _check_risk_limits(ctx: WorkspaceContext, new: dict, baseline: dict) -> None:
+    """Loosening a risk limit (above the account's current value or the server defaults) needs workspace admin.
+
+    Otherwise a `trader` could raise leverage/risk/drawdown limits and make the RiskManager meaningless.
+    """
+    for field in RISK_FIELDS:
+        value = new.get(field)
+        if value is not None and Decimal(str(value)) > Decimal(str(baseline[field])):
+            ctx.require(Role.ADMIN)
+
+
 @router.get("/exchanges", response_model=list[ExchangeInfoOut])
 async def list_exchanges(_: WorkspaceContext = Depends(get_workspace_context)) -> list[ExchangeInfoOut]:
     """Exchanges habilitadas para novas contas (adaptadores experimentais só com EXPERIMENTAL_EXCHANGES_ENABLED)."""
@@ -76,6 +100,7 @@ async def connect_account(
 ) -> Account:
     """Conecta uma conta Binance. As chaves são criptografadas (AES-256-GCM) antes de salvar."""
     _check_live_allowed(data.execution_mode, ctx)
+    _check_risk_limits(ctx, data.model_dump(), _default_risk_limits())
     aad = str(ctx.workspace.id).encode()  # bind ciphertext to the tenant
     account = Account(
         workspace_id=ctx.workspace.id,
@@ -124,6 +149,9 @@ async def update_account(
     if ("execution_mode" in changes or "is_testnet" in changes) and account.status == AccountStatus.RUNNING:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Pare a conta antes de mudar o modo de execução")
     _check_live_allowed(changes.get("execution_mode"), ctx)
+    _check_risk_limits(ctx, changes, {f: getattr(account, f) for f in RISK_FIELDS})
+    if "is_testnet" in changes and changes["is_testnet"] is False and account.is_testnet:
+        ctx.require(Role.ADMIN)  # testnet -> mainnet
     for key, value in changes.items():
         setattr(account, key, value)
     await log_event(

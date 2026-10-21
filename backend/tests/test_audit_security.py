@@ -59,3 +59,37 @@ def test_redaction_masks_query_tokens() -> None:
 
     text = redact_text("GET https://cryptopanic.com/api/?auth_token=abc123&public=true refresh_token=xyz")
     assert "abc123" not in text and "xyz" not in text
+
+
+async def test_trader_cannot_loosen_risk_limits(client) -> None:
+    from tests.test_api_e2e import bearer, register_login
+
+    owner = bearer(await register_login(client, "owner2@example.com"))
+    trader = bearer(await register_login(client, "trader2@example.com"))
+    client.cookies.clear()
+    ws_id = (await client.get("/api/v1/workspaces/", headers=owner)).json()[0]["id"]
+    r = await client.post(
+        f"/api/v1/workspaces/{ws_id}/members", json={"email": "trader2@example.com", "role": "trader"}, headers=owner
+    )
+    assert r.status_code == 201
+    h = {**trader, "X-Workspace-ID": ws_id}
+    body = {"label": "T", "api_key": "placeholder-key-1234", "api_secret": "placeholder-secret-5678"}
+    # creating with limits above the server defaults needs admin
+    r = await client.post("/api/v1/accounts/", json={**body, "max_leverage": 50}, headers=h)
+    assert r.status_code == 403
+    r = await client.post("/api/v1/accounts/", json=body, headers=h)
+    assert r.status_code == 201
+    acc = r.json()["id"]
+    for change in (
+        {"max_leverage": 20},
+        {"max_risk_per_trade_pct": 50},
+        {"max_drawdown_pct": 90},
+        {"is_testnet": False},
+    ):
+        assert (await client.patch(f"/api/v1/accounts/{acc}", json=change, headers=h)).status_code == 403, change
+    # tightening is fine for a trader; loosening is fine for the admin
+    assert (await client.patch(f"/api/v1/accounts/{acc}", json={"max_leverage": 3}, headers=h)).status_code == 200
+    r = await client.patch(
+        f"/api/v1/accounts/{acc}", json={"max_leverage": 10}, headers={**owner, "X-Workspace-ID": ws_id}
+    )
+    assert r.status_code == 200 and r.json()["max_leverage"] == 10
