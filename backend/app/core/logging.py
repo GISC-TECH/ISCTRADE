@@ -13,6 +13,11 @@ from typing import Any
 from app.core.config import settings
 from app.core.redaction import redact, redact_text
 
+try:  # faster JSON lines (one per request/task/audit event); stdlib fallback
+    import orjson as _orjson
+except ImportError:  # pragma: no cover
+    _orjson = None
+
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
 task_id_var: ContextVar[str | None] = ContextVar("task_id", default=None)
 task_name_var: ContextVar[str | None] = ContextVar("task_name", default=None)
@@ -43,6 +48,11 @@ class JsonFormatter(logging.Formatter):
             payload.update(redact(extras))
         if record.exc_info:
             payload["exc"] = redact_text(self.formatException(record.exc_info))
+        if _orjson is not None:
+            try:
+                return _orjson.dumps(payload, default=str, option=_orjson.OPT_NON_STR_KEYS).decode()
+            except TypeError:  # pragma: no cover - exotic values: stdlib fallback
+                pass
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
