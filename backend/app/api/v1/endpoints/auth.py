@@ -8,6 +8,8 @@ from app.api.deps import ACCESS_COOKIE_NAME, get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.rate_limiting import client_ip, rate_limiter
+from app.core.rate_limiting import hit as rate_hit
+from app.core.rate_limiting import peek as rate_peek
 from app.core.security import (
     REFRESH_TOKEN_TYPE,
     Role,
@@ -28,6 +30,8 @@ REFRESH_COOKIE_NAME = "refresh_token"
 # Non-sensitive marker readable by the Next.js middleware (the refresh cookie is path-scoped to the API).
 SESSION_MARKER_COOKIE = "btp_session"
 REFRESH_PATH = f"{settings.API_V1_PREFIX}/auth"
+LOGIN_FAILURE_WINDOW = 15 * 60
+_DUMMY_HASH = hash_password("timing-equalizer-not-a-real-password")
 
 
 def _cookie_opts() -> dict:
@@ -108,11 +112,21 @@ async def register(data: UserCreate, request: Request, db: AsyncSession = Depend
 async def login(
     data: UserLogin, request: Request, response: Response, db: AsyncSession = Depends(get_db)
 ) -> TokenResponse:
-    user = await db.scalar(select(User).where(User.email == data.email.lower()))
-    if not user or not verify_password(data.password, user.hashed_password) or not user.is_active:
+    email = data.email.lower()
+    failures_key = f"rl:login-fail:{email}"
+    if await rate_peek(failures_key, LOGIN_FAILURE_WINDOW) >= settings.LOGIN_FAILURES_PER_EMAIL:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Muitas tentativas para este e-mail. Tente novamente mais tarde.",
+            headers={"Retry-After": str(LOGIN_FAILURE_WINDOW)},
+        )
+    user = await db.scalar(select(User).where(User.email == email))
+    # Always run bcrypt (dummy hash for unknown e-mails) so response time does not reveal registered accounts.
+    password_ok = verify_password(data.password, user.hashed_password if user else _DUMMY_HASH)
+    if not user or not password_ok or not user.is_active:
+        await rate_hit(failures_key, LOGIN_FAILURE_WINDOW)
         await log_event(
-            db, "auth.login_failed", level="warning", ip_address=client_ip(request), email=data.email.lower(),
-            commit=True,
+            db, "auth.login_failed", level="warning", ip_address=client_ip(request), email=email, commit=True,
         )  # fmt: skip
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciais inválidas")
     await log_event(db, "auth.login", user_id=user.id, ip_address=client_ip(request), commit=True)

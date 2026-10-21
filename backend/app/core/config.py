@@ -39,6 +39,17 @@ class Settings(BaseSettings):
 
     ALLOW_REGISTRATION: bool = True
     LOGIN_RATE_LIMIT_PER_MINUTE: int = 10
+    # Failed-login budget per e-mail (across all IPs) per 15 minutes; blocks distributed brute force.
+    LOGIN_FAILURES_PER_EMAIL: int = 20
+    # Proxies whose X-Forwarded-For is trusted (IPs/CIDRs). Default: loopback + private networks (Caddy in
+    # Docker). Requests from any other peer use the socket address, so the header cannot be spoofed.
+    TRUSTED_PROXIES: Annotated[list[str], NoDecode] = [
+        "127.0.0.1/32",
+        "::1/128",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    ]
     REGISTER_RATE_LIMIT_PER_MINUTE: int = 5
 
     # Encryption of exchange credentials (base64-encoded 32 bytes => AES-256)
@@ -181,6 +192,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "CORS_ORIGINS",
+        "TRUSTED_PROXIES",
         "WHATSAPP_TO",
         "NEWS_RSS_FEEDS",
         "X_ACCOUNTS",

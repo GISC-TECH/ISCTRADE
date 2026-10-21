@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import time
 from collections import defaultdict
+from functools import lru_cache
 
 from fastapi import HTTPException, Request, status
 
@@ -43,11 +45,50 @@ async def hit(key: str, window: int = 60) -> int:
         return _memory_hit(key, window)
 
 
+async def peek(key: str, window: int = 60) -> int:
+    """Current count for `key` without incrementing it."""
+    try:
+        value = await get_redis().get(key)
+        return int(value or 0)
+    except Exception:  # pragma: no cover - depends on infra
+        count, start = _memory.get(key, (0, 0.0))
+        return count if time.monotonic() - start < window else 0
+
+
+@lru_cache(maxsize=8)
+def _trusted_networks(proxies: tuple[str, ...]) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    nets = []
+    for p in proxies:
+        try:
+            nets.append(ipaddress.ip_network(p.strip(), strict=False))
+        except ValueError:
+            logger.warning("ignoring invalid TRUSTED_PROXIES entry %r", p)
+    return tuple(nets)
+
+
+def _is_trusted(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in net for net in _trusted_networks(tuple(settings.TRUSTED_PROXIES)))
+
+
 def client_ip(request: Request) -> str:
+    """Client address for rate limiting/audit.
+
+    X-Forwarded-For is only honoured when the direct peer is a trusted proxy, and then the right-most
+    untrusted hop is used (the left-most entries are client-controlled and trivially spoofed).
+    """
+    peer = request.client.host if request.client else "unknown"
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    if not forwarded or not _is_trusted(peer):
+        return peer
+    hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+    for hop in reversed(hops):
+        if not _is_trusted(hop):
+            return hop
+    return hops[0] if hops else peer
 
 
 def rate_limiter(limit: int | None = None, window: int = 60, scope: str | None = None):

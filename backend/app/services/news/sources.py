@@ -39,6 +39,20 @@ class RawNews:
     assets_hint: list[str] = field(default_factory=list)  # tickers provided by the source (CryptoPanic)
     extra: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self.url = safe_url(self.url)
+
+
+def safe_url(url: str | None) -> str | None:
+    """Only absolute http(s) links are kept: feed content is untrusted (javascript:/data: URLs -> XSS)."""
+    if not url:
+        return None
+    url = url.strip()
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc or len(url) > 2048:
+        return None
+    return url
+
 
 def clean_text(value: str | None, limit: int = 2000) -> str:
     text = html.unescape(_TAG.sub(" ", value or ""))

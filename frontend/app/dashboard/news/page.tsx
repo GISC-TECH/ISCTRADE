@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { api, errorMessage } from "@/lib/api";
 import { dateTime } from "@/lib/format";
 import type { AssetSentiment, NewsItem, NewsStatus } from "@/lib/types";
+import { safeHref } from "@/lib/utils";
 
 const PAGE = 50;
 
@@ -194,8 +195,8 @@ export default function NewsPage() {
                     </span>
                   </div>
                   <div className="font-medium">
-                    {n.url ? (
-                      <a href={n.url} target="_blank" rel="noopener noreferrer nofollow" className="hover:underline">
+                    {safeHref(n.url) ? (
+                      <a href={safeHref(n.url)!} target="_blank" rel="noopener noreferrer nofollow" className="hover:underline">
                         {n.title}
                       </a>
                     ) : (

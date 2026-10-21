@@ -17,7 +17,8 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # key=value / "key": "value" / key: value for sensitive names
     (
         re.compile(
-            r"(?i)(\b(?:api[_-]?key|apikey|api[_-]?secret|secret|token|access[_-]?token|password|passwd|"
+            r"(?i)(\b(?:api[_-]?key|apikey|api[_-]?secret|secret|token|access[_-]?token|auth[_-]?token|"
+            r"refresh[_-]?token|bearer[_-]?token|password|passwd|"
             r"signature|x-mbx-apikey|listen[_-]?key)\b[\"']?\s*[:=]\s*[\"']?)([^\s\"'&,;}]+)"
         ),
         r"\1" + MASK,
