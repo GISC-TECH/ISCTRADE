@@ -6,12 +6,13 @@
                        ┌──────────────────────────────┐
      Navegador ──────▶ │        Caddy (HTTPS/TLS)      │
                        └──────────────┬───────────────┘
-                     /*               │        /api/*, /health, /health/*  (/metrics → 404)
+                     /*               │  /api/*, /api/v1/ws (WebSocket), /health/*  (/metrics → 404)
               ┌───────────────────────┴────────────────────────┐
               ▼                                                ▼
    ┌─────────────────────┐   HTTP (cookie httpOnly)   ┌─────────────────────┐
    │ Next.js 14 (front)  │ ─────────────────────────▶ │  FastAPI (backend)  │
-   │ shadcn/ui, Recharts │                            │  /api/v1, RBAC, JWT │
+   │ shadcn/ui, Recharts │ ◀──── WebSocket /api/v1/ws │  /api/v1, RBAC, JWT │
+   │ lightweight-charts  │   (eventos via Redis pub/sub)│                     │
    └─────────────────────┘                            └──────────┬──────────┘
                                                                  │
                          ┌──────────────────────┬────────────────┼──────────────────┐
@@ -37,15 +38,15 @@
 
 | Componente | Responsabilidade |
 |---|---|
-| **Caddy** | Terminação TLS, headers de segurança, roteamento `/api`, `/health`, `/health/*` → backend e `/` → frontend. `/metrics` responde 404 (métricas só na rede interna). |
+| **Caddy** | Terminação TLS, headers de segurança, roteamento `/api`, `/health`, `/health/*` → backend e `/` → frontend; `/api/v1/ws` (WebSocket) com `flush_interval -1` e `stream_close_delay 5m`. `/metrics` responde 404 (métricas só na rede interna). |
 | **Next.js** (`frontend`) | UI: autenticação, dashboard (saldo, PnL, posições, curva de patrimônio), contas, bots, backtest, histórico, workspaces, perfil e admin. Fala com a API só via `lib/api.ts` (cookies + header `X-Workspace-ID`). |
-| **FastAPI** (`backend`) | Autenticação (JWT em cookie httpOnly com revogação por `token_version`), RBAC, workspaces, contas, bots, backtest, histórico, admin, rate limiting. |
+| **FastAPI** (`backend`) | Autenticação (JWT em cookie httpOnly com revogação por `token_version`), RBAC, workspaces, contas, bots, backtest, histórico, admin, rate limiting, **trading manual** (`/trading/*`), candles (`/market/klines`) e **WebSocket em tempo real** (`/ws`, assinando o Redis pub/sub) — veja [REALTIME.md](REALTIME.md). |
 | **migrate** | Serviço one-shot (`alembic upgrade head`) executado antes de API e workers. |
 | **celery_worker** | Tarefas: tick dos bots, scanner de mercado (`scanner.run`), coleta/análise de notícias (`news.ingest`), calendário econômico (`calendar.refresh`/`calendar.alerts`), start/stop de contas, reconciliação, snapshots de equity, reset diário e entrega de alertas (`alerts.process`/`alerts.deliver`, com retries). Métricas na porta interna 9101 (modo multiprocess). |
-| **celery_beat** | Agendador (uma única instância): `tick-bots` (30 s), `reconcile-accounts` (60 s), `equity-snapshots` (5 min), `daily-risk-reset` (00:00 UTC), `market-scanner` (`SCANNER_REFRESH_SECONDS`), `news-ingest` (`NEWS_REFRESH_SECONDS`), `calendar-refresh` (1 h), `calendar-alerts` (1 min), `alerts-daily-summary` (`ALERT_DAILY_SUMMARY_HOUR_UTC`:05). |
-| **streams** | Processo assíncrono com WebSockets da Binance (user data stream com keepalive do listenKey e mark price), alimentando o `Reconciler` e o cache de preços. Grava um heartbeat no Redis (`streams:heartbeat`) e alerta quando um WebSocket fica fora por mais de `ALERT_WS_DISCONNECT_SECONDS`. Métricas na porta interna 9102. |
+| **celery_beat** | Agendador (uma única instância): `tick-bots` (30 s), `reconcile-accounts` (60 s), `equity-snapshots` (5 min), `daily-risk-reset` (00:00 UTC), `market-scanner` (`SCANNER_REFRESH_SECONDS`), `news-ingest` (`NEWS_REFRESH_SECONDS`), `calendar-refresh` (1 h), `calendar-alerts` (1 min), `paper-orders` (`PAPER_ORDER_CHECK_SECONDS`: LIMIT/SL/TP das contas paper), `alerts-daily-summary` (`ALERT_DAILY_SUMMARY_HOUR_UTC`:05). |
+| **streams** | Processo assíncrono com WebSockets da Binance (user data stream com keepalive do listenKey e mark price), alimentando o `Reconciler` e o cache de preços. Também roda o `MarketFeed` (mini tickers, mark price/funding e candles sob demanda, mainnet e Testnet) publicando em `rt:market:<net>` e resumos do user data stream em `rt:ws:<workspace>`. Grava um heartbeat no Redis (`streams:heartbeat`) e alerta quando um WebSocket fica fora por mais de `ALERT_WS_DISCONNECT_SECONDS`. Métricas na porta interna 9102. |
 | **prometheus / grafana** | Opcionais (`docker compose --profile monitoring up -d`), portas só em `127.0.0.1` (9090 e 3001). Dashboard provisionado em `infra/monitoring/grafana/dashboards`. |
-| **Redis** | Broker do Celery, cache de preços e de klines do scanner, rate limiting, locks distribuídos por conta/bot. |
+| **Redis** | Broker do Celery, cache de preços e de klines do scanner, rate limiting, locks distribuídos por conta/bot, **pub/sub do tempo real** (`rt:market:*`, `rt:ws:<workspace>`, `rt:global`) e registro de candles assinados. |
 | **PostgreSQL** | Persistência (usuários, workspaces, contas com chaves criptografadas, bots, ordens, execuções, posições, equity, backtests, auditoria). |
 | **Binance** | REST assinado (HMAC-SHA256) para ordens/conta; WebSocket para mercado e user data stream. |
 
@@ -61,7 +62,12 @@
    - **`LiveExecutor`** — somente se `LIVE_TRADING_ENABLED=true` **e** a conta estiver em `execution_mode=live`. Envia a ordem + `STOP_MARKET` *reduce-only* à Binance.
 4. User data stream (WebSocket) + `Reconciler` mantêm ordens, execuções e posições consistentes com a corretora.
 5. `equity` grava snapshots usados no dashboard e nas regras de perda diária/drawdown; ao estourar o drawdown a conta vira `killed` (e, se `KILL_SWITCH_CLOSE_POSITIONS=true`, as posições são encerradas com ordens *reduce-only*).
-6. Todos os eventos relevantes vão para a trilha de auditoria (`audit_logs`) com dados sensíveis mascarados.
+6. Todos os eventos relevantes vão para a trilha de auditoria (`audit_logs`) com dados sensíveis mascarados e, após o commit, são publicados no canal em tempo real do workspace.
+
+**Ordens manuais** (`POST /api/v1/trading/orders`, painel `/dashboard/live`) entram no mesmo fluxo a partir do
+passo 2: bloqueio por kill switch global/da conta, `OrderService` + `RiskManager` (stop loss obrigatório) e o
+executor do modo da conta. LIMIT paper fica pendente até a tarefa `paper.process_orders` preencher; em live são
+enviados LIMIT/MARKET + `STOP_MARKET` + `TAKE_PROFIT_MARKET` (`closePosition`). Detalhes em [REALTIME.md](REALTIME.md).
 
 ## Multi-tenancy
 

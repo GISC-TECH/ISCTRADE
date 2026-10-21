@@ -106,3 +106,9 @@ Símbolos com posição aberta continuam sendo gerenciados (saídas/stops) mesmo
 acima de `max_positions` são bloqueadas (`max_concurrent_positions`). **Todas as ordens continuam passando pelo
 RiskManager da conta** — inclusive a perda diária e o kill switch, que valem para a conta inteira. Em contas
 Testnet, símbolos sem dados na Testnet são ignorados.
+
+## Veja também
+
+- [NEWS.md](NEWS.md) — filtro de notícias/sentimento e pausa por eventos econômicos aplicados às entradas dos bots.
+- [REALTIME.md](REALTIME.md) — painel em tempo real: candles ao vivo com EMAs, marcadores das entradas/saídas dos
+  bots, posições com PnL ao vivo e ordens manuais (sempre via RiskManager, com stop obrigatório).

@@ -39,6 +39,8 @@
 - [x] Máquina de estados do bot integrada às tasks Celery (worker + beat)
 - [x] Reconciliador de ordens/posições
 - [x] Kill switch por conta (drawdown) e kill switch global (admin)
+- [x] Painel em tempo real (WebSocket autenticado + Redis pub/sub): cotações, candles, posições/PnL, ordens, bots e alertas ([REALTIME.md](REALTIME.md))
+- [x] Trading manual (MARKET/LIMIT, SL obrigatório, TP, fechar/fechar todas, alavancagem) via RiskManager, com LIMIT/SL/TP simulados no paper
 - [ ] Comparar resultados do paper com o backtest por ≥ 4 semanas *(operacional)*
 
 ## Fase 3 — Conta real mínima
@@ -46,6 +48,7 @@
 - [x] Stop loss de proteção (`STOP_MARKET` reduce-only) enviado junto da ordem real
 - [ ] Chaves sem permissão de saque e com whitelist de IP *(operacional — ver SECURITY.md)*
 - [ ] Capital mínimo, alavancagem ≤ 2x, risco por trade ≤ 0,5% *(configuração por conta)*
+- [x] Confirmação explícita na UI para ordens manuais (destacando conta REAL)
 - [ ] Kill switch testado em produção (simulação controlada)
 - [ ] Runbook de incidentes completo (rascunho em SECURITY.md)
 

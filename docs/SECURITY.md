@@ -29,6 +29,10 @@
 - Ordens reais são acompanhadas de um `STOP_MARKET` *reduce-only* de proteção.
 - **Kill switch por conta**: drawdown acima do limite muda a conta para `killed`, para os bots e (com `KILL_SWITCH_CLOSE_POSITIONS=true`) encerra as posições. Só um admin do workspace pode resetar.
 - **Kill switch global** (super-admin, painel Admin): bloqueia novas ordens de abertura em todas as contas.
+- **Trading manual** (`/api/v1/trading/*`, papel `trader`/`admin`): mesmo pipeline dos bots (kill switches →
+  filtros → `RiskManager` → executor do modo da conta), stop loss obrigatório, `confirm=true` explícito e diálogo de
+  confirmação na UI; com kill switch só fechar/cancelar é permitido. Toda ação é auditada (`manual.*`, com o
+  usuário) e gera o alerta `manual_action`. Veja [REALTIME.md](REALTIME.md).
 - Os testes automatizados **sempre** simulam a Binance (transportes HTTP/WebSocket falsos); nenhuma ordem real é enviada pela suíte.
 
 ## Notícias, LLM e fontes externas
@@ -48,6 +52,12 @@
 - Rate limiting (Redis, com fallback em memória) em login e registro. `ALLOW_REGISTRATION=false` desativa novos cadastros.
 - RBAC por workspace: `admin` (gerencia contas, membros, reset de kill switch), `trader` (opera contas e bots), `viewer` (somente leitura). O dono do workspace é sempre `admin`. O papel global `admin` (super-admin) acessa o painel de administração.
 - Isolamento de dados por workspace em todas as consultas; o header `X-Workspace-ID` é validado contra a associação do usuário.
+- **WebSocket em tempo real** (`/api/v1/ws`): autenticado pelo mesmo cookie httpOnly (com checagem de
+  `token_version`), `Origin` obrigatoriamente em `CORS_ORIGINS` (contra *cross-site WebSocket hijacking*), só o
+  canal do workspace do qual o usuário é membro (revalidado a cada 60 s; fechamento `4401` ao expirar o token),
+  limite de conexões por usuário e de assinaturas por conexão, mensagens do cliente limitadas a 4 KB. Os eventos
+  carregam apenas dados já visíveis na API do workspace (nunca chaves, segredos ou tokens); alertas sem workspace
+  (falhas de tarefas, streams) não são transmitidos.
 
 ## Infraestrutura
 - Apenas o Caddy expõe portas públicas em produção (80/443). PostgreSQL, Redis, backend e frontend ficam em redes internas (o override de produção remove as portas publicadas).

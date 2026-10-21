@@ -25,6 +25,7 @@ Plataforma **self-hosted** para automação e monitoramento de operações em **
 - **Bots**: estratégias `grid`, `ema_cross`, `rsi_bollinger`, `rsi_mean_reversion`, `bollinger_reversion`, `bollinger_squeeze`, `donchian_breakout`, `ema_adx_trend` e `supertrend` (stop ATR obrigatório, ver [docs/STRATEGIES.md](docs/STRATEGIES.md)) com máquina de estados (`idle → running → paused/stopped/error/killed`), executados pelo Celery a cada candle fechado.
 - **Scanner de mercado**: ranking dos perpétuos USDT-M por liquidez, tendência (ADX/EMAs), ATR%, momentum, pico de volume, funding e sinais das estratégias; snapshot periódico pelo Celery, tela própria e **seleção automática de símbolos** nos bots (top-N com limite de posições simultâneas, sempre via RiskManager).
 - **Notícias & calendário**: RSS (CoinDesk, Cointelegraph, Decrypt, The Block), CryptoPanic e X opcionais, sentimento por LLM compatível com OpenAI (ou léxico local), sentimento agregado por ativo e calendário econômico (ForexFactory). Usados apenas como **filtro** de entradas (bloquear/reduzir/pausar), com alertas no WhatsApp — veja [docs/NEWS.md](docs/NEWS.md).
+- **Tempo real & trading manual**: WebSocket autenticado (`/api/v1/ws`) com cotações, mark price/funding, candles, ordens, execuções, posições, bots e alertas ao vivo; barra de cotações, gráfico de candles (lightweight-charts) com EMAs e marcadores de entradas/saídas, PnL ao vivo e **ordens manuais** MARKET/LIMIT com stop loss obrigatório, take profit, fechar/fechar todas e alavancagem — sempre via RiskManager, no modo da conta (paper por padrão) e respeitando os kill switches. Veja [docs/REALTIME.md](docs/REALTIME.md).
 - **Backtest**: motor com taxas, slippage, stops com *gap*, mesmas regras de risco do ao vivo; métricas (retorno, drawdown, Sharpe, win rate, profit factor, buy & hold) e curva de patrimônio. Dados públicos da Binance ou CSV próprio.
 - **Integração Binance**: cliente REST assinado, WebSockets (user data + mark price) com reconexão, reconciliador de ordens/posições.
 - **Dashboard**: patrimônio, PnL, posições, curva de equity, histórico de ordens/execuções/auditoria.
@@ -152,7 +153,7 @@ O workflow em [`docs/ci/ci.yml`](docs/ci/ci.yml) (mova para `.github/workflows/`
 
 ## Documentação
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/ALERTS.md`](docs/ALERTS.md) (alertas via WhatsApp) · [`docs/STRATEGIES.md`](docs/STRATEGIES.md) (estratégias e scanner) · [`docs/NEWS.md`](docs/NEWS.md) (notícias, sentimento e calendário)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/ALERTS.md`](docs/ALERTS.md) (alertas via WhatsApp) · [`docs/STRATEGIES.md`](docs/STRATEGIES.md) (estratégias e scanner) · [`docs/NEWS.md`](docs/NEWS.md) (notícias, sentimento e calendário) · [`docs/REALTIME.md`](docs/REALTIME.md) (painel em tempo real e trading manual)
 - [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) — guia para usar agentes de IA (Claude Code, Cursor, Copilot, Aider) e prompts para as etapas restantes; regras em [`AGENTS.md`](AGENTS.md)
 
 ## Segurança

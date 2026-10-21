@@ -111,3 +111,9 @@ resultado informa `news_items_available` e `events_available`). Para avaliar a e
 - `GET /api/v1/calendar/?days_back=&days_ahead=&impact=&country=`
 
 Telas: **Notícias** (feed, badges de sentimento/impacto e medidores por ativo) e **Calendário**.
+
+## Veja também
+
+- [STRATEGIES.md](STRATEGIES.md) — estratégias e scanner cujas entradas este módulo filtra.
+- [REALTIME.md](REALTIME.md) — notícias novas e alertas também chegam ao painel em tempo real (eventos `news` e
+  `alert` do WebSocket).

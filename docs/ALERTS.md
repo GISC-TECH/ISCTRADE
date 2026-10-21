@@ -37,7 +37,7 @@ evento (auditoria / WebSocket / Celery / beat)
 | `risk_limit` — perda diária / drawdown atingido | 🚨 crítico | ligado | ordem rejeitada por `max_daily_loss`, `max_drawdown` ou `kill_switch` |
 | `order_rejected` — ordem rejeitada pelo risco | ⚠️ aviso | ligado | `order.rejected` (demais motivos) |
 | `order_filled` — ordem executada | ℹ️ info | desligado | `order.filled` / `order.submitted` |
-| `position_opened` / `position_closed` | ℹ️ info | desligado | fills em paper; stop loss simulado |
+| `position_opened` / `position_closed` | ℹ️ info | desligado | fills em paper; stop loss / take profit simulados |
 | `bot_error` — bot em erro | ⚠️ aviso | ligado | `bot.error` |
 | `ws_disconnected` — WebSocket fora por mais de `ALERT_WS_DISCONNECT_SECONDS` (e reconexão ✅) | ⚠️ aviso | ligado | worker `streams` |
 | `reconciler_mismatch` — posições corrigidas pelo reconciliador | ⚠️ aviso | ligado | `reconcile.changes` |
@@ -46,6 +46,7 @@ evento (auditoria / WebSocket / Celery / beat)
 | `news_high_impact` — notícia de alto impacto em símbolo operado | ⚠️ aviso | ligado | `news.ingest` ([NEWS.md](NEWS.md)); uma vez por notícia, só para workspaces expostos ao símbolo |
 | `economic_event` — evento econômico de alto impacto em breve | ℹ️ info | ligado | beat `calendar.alerts` (`ECON_ALERT_LEAD_MINUTES` antes) |
 | `bot_event_pause` — bot pausou novas entradas por evento | ℹ️ info | ligado | `bot.event_pause` |
+| `manual_action` — ação manual de trading (ordem, fechar, fechar todas, cancelar, alavancagem, tentativa bloqueada por kill switch) | ℹ️ info / ⚠️ aviso se rejeitada ou bloqueada | ligado | `manual.*` ([REALTIME.md](REALTIME.md)) |
 
 Exemplo de mensagem:
 
