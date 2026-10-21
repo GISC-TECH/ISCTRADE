@@ -197,15 +197,24 @@ def ws_fanout(n_sessions: int = 50, n_msgs: int = 50) -> None:
             )
             s.symbols = {f"SYM{i}USDT" for i in range(0, 600, 30)}  # 20 watched symbols
             sessions.append(s)
-        samples = []
+        samples, hub_samples = [], []
         for _ in range(n_msgs):
             t0 = time.perf_counter()
             for s in sessions:
-                s._coalesce(payload)
+                s._coalesce(payload)  # per-session decode (pre-MarketHub behaviour)
             samples.append((time.perf_counter() - t0) * 1000)
-        return samples
+            if hasattr(realtime_ws, "decode_market"):
+                t0 = time.perf_counter()
+                update = realtime_ws.decode_market(payload)  # MarketHub: decode once per process
+                for s in sessions:
+                    s.on_market(*update)
+                hub_samples.append((time.perf_counter() - t0) * 1000)
+        return samples, hub_samples
 
-    report(f"ws_fanout ({n_sessions} sessions x 600 tickers)", asyncio.run(run()), extra=f"msg={len(payload)}B")
+    samples, hub_samples = asyncio.run(run())
+    report(f"ws_fanout per-session decode ({n_sessions} x 600)", samples, extra=f"msg={len(payload)}B")
+    if hub_samples:
+        report(f"ws_fanout MarketHub ({n_sessions} x 600)", hub_samples)
 
 
 def publish(n: int = 200) -> None:

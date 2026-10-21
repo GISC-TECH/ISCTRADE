@@ -338,3 +338,34 @@ async def test_klines_endpoint_uses_public_client(client, monkeypatch) -> None:
     assert r.json()[0] == {"t": 1, "o": 1.0, "h": 2.0, "l": 0.5, "c": 1.5, "v": 10.0, "x": True}
     assert r.json()[1]["x"] is False
     assert (await client.get("/api/v1/market/klines", params={"symbol": "BTC", "interval": "7m"})).status_code == 422
+
+
+async def test_market_hub_decodes_once_for_all_sessions(db, monkeypatch) -> None:
+    monkeypatch.setattr(realtime, "want_klines", lambda *a, **k: asyncio.sleep(0))
+    user, ws_row = await make_user_workspace(db)
+    await db.commit()
+    decoded: list[str] = []
+    real_decode = realtime_ws.decode_market
+    monkeypatch.setattr(realtime_ws, "decode_market", lambda data: decoded.append(data) or real_decode(data))
+
+    conns = [FakeWS(_token(user)) for _ in range(3)]
+    tasks = [await _open(c, ws_row.id) for c in conns]
+    for c, net in zip(conns, ("main", "main", "test"), strict=True):
+        c.client_send({"op": "subscribe", "net": net, "symbols": ["BTCUSDT"]})
+        await wait_for(lambda c=c: c.of_type("subscribed"))
+    market_subs = [s for s in realtime.memory_broker._subs if realtime.market_channel(False) in s[2]]
+    assert len(market_subs) == 1  # one shared market subscription for the whole process
+
+    rows = [{"s": f"S{i}USDT", "c": i} for i in range(300)] + [{"s": "BTCUSDT", "c": 42}]
+    await realtime.publish(realtime.market_channel(False), realtime.message("tickers", rows))
+    await wait_for(lambda: conns[0].of_type("tickers") and conns[1].of_type("tickers"))
+    await asyncio.sleep(0.15)
+    assert len(decoded) == 1  # decoded once, not once per session
+    assert [r["s"] for m in conns[0].of_type("tickers") for r in m["data"]] == ["BTCUSDT"]
+    assert not conns[2].of_type("tickers")  # other network
+
+    for c, t in zip(conns, tasks, strict=True):
+        await _shutdown(c, t)
+    hub = realtime_ws.market_hub()
+    assert hub.task is None and not hub.listeners  # stopped with the last session
+    assert not [s for s in realtime.memory_broker._subs if realtime.market_channel(False) in s[2]]

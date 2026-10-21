@@ -6,6 +6,9 @@
   non-sensitive global events. Membership and session revocation are re-checked periodically; the socket
   is closed with 4401 when the access token expires (the client refreshes and reconnects).
 * Throttling: price/kline updates are coalesced per symbol and flushed every REALTIME_PRICE_THROTTLE_MS.
+* Fan-out: market data (all-symbol tickers/marks, ~45 KB/s per network) arrives through ONE shared
+  subscription per API process (MarketHub), decoded once and indexed by symbol; each session only keeps its
+  own subscription for the low-volume workspace/global channels.
 
 Client -> server: {"op": "subscribe", "net": "main"|"test", "symbols": [...], "klines": [{"symbol","interval"}]}
                   {"op": "ping"}
@@ -21,6 +24,7 @@ import logging
 import re
 import time
 import uuid
+import weakref
 from collections import defaultdict
 from typing import Any
 
@@ -94,6 +98,96 @@ class Subscription:
             realtime.memory_broker.unsubscribe(self.queue)
 
 
+MarketUpdate = tuple[str, Any]  # ("tickers"|"mark", {symbol: row}) or ("kline", row)
+
+
+def decode_market(data: str) -> MarketUpdate | None:
+    """Parse a market pub/sub message once and index ticker/mark rows by symbol."""
+    try:
+        msg = realtime.decode(data)
+    except ValueError:
+        return None
+    if not isinstance(msg, dict):
+        return None
+    kind = msg.get("type")
+    if kind in ("tickers", "mark"):
+        rows = msg.get("data") or []
+        return kind, {row.get("s"): row for row in rows if isinstance(row, dict)}
+    if kind == "kline" and isinstance(msg.get("data"), dict):
+        return kind, msg["data"]
+    return None
+
+
+class MarketHub:
+    """Single market-data subscription per event loop, shared by every RealtimeSession of the process.
+
+    Before: each browser session subscribed to both market channels and JSON-decoded every all-symbol message
+    (N sessions = N copies from Redis + N decodes of ~45 KB). Now Redis delivers each message once per process,
+    it is decoded once and dispatched in memory to the sessions on that network.
+    """
+
+    CHANNELS = (realtime.market_channel(False), realtime.market_channel(True))
+
+    def __init__(self) -> None:
+        self.listeners: set[RealtimeSession] = set()
+        self.sub: Subscription | None = None
+        self.task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
+
+    async def join(self, session: RealtimeSession) -> None:
+        self.listeners.add(session)
+        async with self._lock:
+            if self.task is None or self.task.done():
+                sub = Subscription(set(self.CHANNELS))
+                await sub.open()
+                self.sub, self.task = sub, asyncio.create_task(self._run(sub))
+
+    async def leave(self, session: RealtimeSession) -> None:
+        self.listeners.discard(session)
+        async with self._lock:
+            if self.listeners or self.task is None:
+                return
+            task, sub, self.task, self.sub = self.task, self.sub, None, None
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+            if sub is not None:
+                await sub.close()
+
+    async def _run(self, sub: Subscription) -> None:
+        test_channel = self.CHANNELS[1]
+        while True:
+            try:
+                item = await sub.get(timeout=1.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - broker hiccup: retry
+                logger.debug("market hub receive failed: %s", type(exc).__name__)
+                await asyncio.sleep(0.5)
+                continue
+            if item is None:
+                continue
+            channel, data = item
+            update = decode_market(data)
+            if update is None:
+                continue
+            net = "test" if channel == test_channel else "main"
+            for session in tuple(self.listeners):
+                if session.net == net:
+                    session.on_market(*update)
+
+
+_hubs: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, MarketHub] = weakref.WeakKeyDictionary()
+
+
+def market_hub() -> MarketHub:
+    loop = asyncio.get_running_loop()
+    hub = _hubs.get(loop)
+    if hub is None:
+        hub = _hubs[loop] = MarketHub()
+    return hub
+
+
 class RealtimeSession:
     def __init__(self, ws: WebSocket, user: User, workspace: Workspace, token_ver: int, token_exp: float) -> None:
         self.ws = ws
@@ -106,9 +200,7 @@ class RealtimeSession:
         self.klines: set[tuple[str, str]] = set()
         self.pending: dict[tuple[str, str], dict[str, Any]] = {}
         self.ws_channel = realtime.workspace_channel(workspace.id)
-        self.sub = Subscription(
-            {realtime.market_channel(False), realtime.market_channel(True), self.ws_channel, realtime.GLOBAL}
-        )
+        self.sub = Subscription({self.ws_channel, realtime.GLOBAL})  # market data comes from the MarketHub
         self.closed = False
         self.close_code = 1000
 
@@ -117,6 +209,8 @@ class RealtimeSession:
 
     async def run(self) -> None:
         await self.sub.open()
+        hub = market_hub()
+        await hub.join(self)
         await self.send(
             realtime.message("hello", {
                 "workspace_id": self.workspace_id, "realtime": True,
@@ -134,6 +228,7 @@ class RealtimeSession:
         finally:
             for t in tasks:
                 t.cancel()
+            await hub.leave(self)
             await self.sub.close()
 
     async def close(self, code: int, reason: str = "") -> None:
@@ -189,31 +284,30 @@ class RealtimeSession:
 
     # ------------------------------------------------------------------ server -> client
     async def _pump(self) -> None:
-        market = realtime.market_channel(self.net == "test")
+        """Private workspace and global events (market data is pushed by the MarketHub via on_market)."""
         while not self.closed:
             item = await self.sub.get(timeout=1.0)
             if item is None:
                 continue
             channel, data = item
-            if channel.startswith("rt:market:"):
-                market = realtime.market_channel(self.net == "test")
-                if channel == market:
-                    self._coalesce(data)
-            elif channel in (self.ws_channel, realtime.GLOBAL):
+            if channel in (self.ws_channel, realtime.GLOBAL):
                 await self.ws.send_text(data)
 
     def _coalesce(self, data: str) -> None:
-        try:
-            msg = json.loads(data)
-        except json.JSONDecodeError:
-            return
-        kind = msg.get("type")
+        """Decode + coalesce one market message (the MarketHub decodes once for all sessions instead)."""
+        update = decode_market(data)
+        if update is not None:
+            self.on_market(*update)
+
+    def on_market(self, kind: str, payload: Any) -> None:
+        """Keep only the latest row per watched symbol until the next flush (O(watched symbols))."""
         if kind in ("tickers", "mark"):
-            for row in msg.get("data") or []:
-                if row.get("s") in self.symbols:
-                    self.pending[(kind, row["s"])] = row
+            for symbol in self.symbols:
+                row = payload.get(symbol)
+                if row is not None:
+                    self.pending[(kind, symbol)] = row
         elif kind == "kline":
-            row = msg.get("data") or {}
+            row = payload
             if (row.get("s"), row.get("i")) in self.klines:
                 key = ("kline", f"{row['s']}:{row['i']}")
                 prev = self.pending.get(key)

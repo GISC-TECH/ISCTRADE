@@ -59,8 +59,24 @@ def _default(value: Any) -> Any:
     return str(value)
 
 
+try:  # orjson: ~5-10x faster (de)serialization of the high-volume market messages; stdlib json as fallback
+    import orjson as _orjson
+except ImportError:  # pragma: no cover
+    _orjson = None
+
+
 def encode(message: dict[str, Any]) -> str:
+    if _orjson is not None:
+        try:
+            return _orjson.dumps(message, default=_default, option=_orjson.OPT_NON_STR_KEYS).decode()
+        except TypeError:  # e.g. integers beyond 64 bits: let the stdlib handle it
+            pass
     return json.dumps(message, default=_default, separators=(",", ":"))
+
+
+def decode(data: str | bytes) -> Any:
+    """Parse a pub/sub payload (raises ValueError on invalid JSON, like json.loads)."""
+    return _orjson.loads(data) if _orjson is not None else json.loads(data)
 
 
 def message(kind: str, data: dict[str, Any] | list[Any] | None = None, **extra: Any) -> dict[str, Any]:
