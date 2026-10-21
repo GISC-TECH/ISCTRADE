@@ -9,14 +9,18 @@ import type {
   AlertItem,
   AlertSettings,
   AlertSettingsUpdate,
+  AssetSentiment,
   AuditEntry,
   BacktestRequest,
   BacktestRun,
   Bot,
   BotOptions,
+  EconomicEvent,
   EquityPoint,
   Member,
   MonitoringStatus,
+  NewsItem,
+  NewsStatus,
   Order,
   Page,
   PositionOut,
@@ -194,6 +198,15 @@ export const api = {
   // scanner
   scanner: (params?: Query) => request<ScannerResponse>(`/scanner/${qs(params)}`),
   refreshScanner: () => post<{ queued: boolean }>("/scanner/refresh"),
+
+  // news & economic calendar
+  news: (params?: Query) => request<Page<NewsItem>>(`/news/${qs(params)}`),
+  newsSentiment: (symbols?: string[]) =>
+    request<AssetSentiment[]>(`/news/sentiment${qs({ symbols: symbols?.length ? symbols.join(",") : undefined })}`),
+  newsStatus: () => request<NewsStatus>("/news/status"),
+  refreshNews: () => post<{ queued: boolean }>("/news/refresh"),
+  calendar: (params?: Query) => request<EconomicEvent[]>(`/calendar/${qs(params)}`),
+  refreshCalendar: () => post<{ queued: boolean }>("/calendar/refresh"),
 
   // monitoring / alerts
   monitoringStatus: () => request<MonitoringStatus>("/monitoring/status"),

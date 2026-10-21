@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { DEFAULT_EVENT_PAUSE, DEFAULT_NEWS_FILTER, EventPauseFields, NewsFilterFields } from "@/components/bot-options";
 import { EmptyState, PageHeader } from "@/components/common";
 import { EquityChart } from "@/components/equity-chart";
 import { ParamFields, defaultParams } from "@/components/param-fields";
@@ -16,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, errorMessage } from "@/lib/api";
 import { INTERVALS } from "@/lib/constants";
 import { dateTime, num, pct, pnlClass, qty, usd } from "@/lib/format";
-import type { BacktestConfig, BacktestRun, StrategyInfo } from "@/lib/types";
+import type { BacktestConfig, BacktestFilters, BacktestRun, StrategyInfo } from "@/lib/types";
 
 const DEFAULT_CONFIG: BacktestConfig = {
   initial_balance: 10000,
@@ -147,6 +148,10 @@ export default function StrategiesPage() {
   const [testnetData, setTestnetData] = useState(false);
   const [csv, setCsv] = useState("");
   const [config, setConfig] = useState<BacktestConfig>(DEFAULT_CONFIG);
+  const [filters, setFilters] = useState<BacktestFilters>({
+    news_filter: DEFAULT_NEWS_FILTER,
+    event_pause: DEFAULT_EVENT_PAUSE,
+  });
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestRun | null>(null);
@@ -179,6 +184,7 @@ export default function StrategiesPage() {
         symbol,
         interval,
         config,
+        filters,
         ...(source === "csv"
           ? { candles_csv: csv }
           : { start: `${start}T00:00:00Z`, end: `${end}T23:59:59Z`, use_testnet_data: testnetData }),
@@ -248,6 +254,7 @@ export default function StrategiesPage() {
                 <TabsTrigger value="data">Dados</TabsTrigger>
                 <TabsTrigger value="params">Parâmetros</TabsTrigger>
                 <TabsTrigger value="risk">Custos & risco</TabsTrigger>
+                <TabsTrigger value="filters">Notícias & eventos</TabsTrigger>
               </TabsList>
               <TabsContent value="data" className="pt-3">
                 {source === "binance" ? (
@@ -295,6 +302,23 @@ export default function StrategiesPage() {
                 ) : (
                   <EmptyState>Selecione uma estratégia.</EmptyState>
                 )}
+              </TabsContent>
+              <TabsContent value="filters" className="space-y-3 pt-3">
+                <Alert variant="warning">
+                  Os filtros usam apenas notícias e eventos já coletados por esta instância (não há arquivo histórico de
+                  notícias). Períodos anteriores à coleta rodam sem filtro. Deixe desligado para um backtest puro da
+                  estratégia.
+                </Alert>
+                <NewsFilterFields
+                  idPrefix="bt-nf"
+                  value={filters.news_filter}
+                  onChange={(n) => setFilters({ ...filters, news_filter: n })}
+                />
+                <EventPauseFields
+                  idPrefix="bt-ep"
+                  value={filters.event_pause}
+                  onChange={(e) => setFilters({ ...filters, event_pause: e })}
+                />
               </TabsContent>
               <TabsContent value="risk" className="pt-3">
                 <div className="grid gap-3 sm:grid-cols-3">

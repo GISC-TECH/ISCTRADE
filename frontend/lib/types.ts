@@ -218,6 +218,7 @@ export interface BacktestRequest {
   candles_csv?: string;
   use_testnet_data?: boolean;
   config: Partial<BacktestConfig>;
+  filters?: BacktestFilters;
 }
 
 export interface BacktestMetrics {
@@ -356,8 +357,83 @@ export interface AutoSymbolsOptions {
   prefer_signals: boolean;
 }
 
+export interface NewsFilterOptions {
+  mode: "off" | "filter" | "reduce_risk";
+  opposing_threshold: number;
+  min_confidence: number;
+  high_impact_minutes: number;
+  size_multiplier: number;
+}
+
+export interface EventPauseOptions {
+  enabled: boolean;
+  minutes_before: number;
+  minutes_after: number;
+  min_impact: "medium" | "high";
+  countries: string[];
+  tighten_minutes: number;
+  risk_multiplier: number;
+}
+
 export interface BotOptions {
   auto_symbols: AutoSymbolsOptions;
+  news_filter: NewsFilterOptions;
+  event_pause: EventPauseOptions;
+}
+
+export interface BacktestFilters {
+  news_filter: NewsFilterOptions;
+  event_pause: EventPauseOptions;
+}
+
+// news & calendar
+export type Impact = "low" | "medium" | "high";
+
+export interface NewsItem {
+  id: string;
+  source: string;
+  source_name: string;
+  url: string | null;
+  title: string;
+  published_at: string;
+  assets: string[];
+  symbols: string[];
+  sentiment: number | null;
+  impact: Impact | null;
+  summary_pt: string | null;
+  analysis_method: "llm" | "lexicon" | null;
+}
+
+export interface AssetSentiment {
+  symbol: string;
+  score: number;
+  confidence: number;
+  count: number;
+  high_impact_negative: { title: string; published_at: string } | null;
+}
+
+export interface NewsStatus {
+  enabled: boolean;
+  llm_enabled: boolean;
+  llm_model: string | null;
+  rss_sources: string[];
+  cryptopanic_enabled: boolean;
+  x_enabled: boolean;
+  last_item_at: string | null;
+  total_items: number;
+  half_life_hours: number;
+  window_hours: number;
+}
+
+export interface EconomicEvent {
+  id: string;
+  source: string;
+  title: string;
+  country: string;
+  impact: Impact | "holiday";
+  event_time: string;
+  forecast: string | null;
+  previous: string | null;
 }
 
 export interface ScannerRow {
