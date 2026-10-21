@@ -136,7 +136,9 @@ export function useNet(net: Net | null) {
 export function useRealtimeEvent(types: string[], handler: (msg: RealtimeMessage) => void) {
   const client = useRealtimeClient();
   const ref = useRef(handler);
-  ref.current = handler;
+  useEffect(() => {
+    ref.current = handler;
+  });
   const key = types.join(",");
   useEffect(() => {
     if (!client) return;
@@ -148,7 +150,9 @@ export function useRealtimeEvent(types: string[], handler: (msg: RealtimeMessage
 export function useKlineStream(symbol: string, interval: string, onKline: (k: KlineMsg) => void) {
   const client = useRealtimeClient();
   const ref = useRef(onKline);
-  ref.current = onKline;
+  useEffect(() => {
+    ref.current = onKline;
+  });
   useEffect(() => {
     if (!client || !symbol) return;
     const unwatch = client.watchKlines(symbol, interval);
