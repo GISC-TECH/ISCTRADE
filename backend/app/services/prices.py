@@ -22,6 +22,19 @@ async def cache_price(symbol: str, price: Decimal | str, testnet: bool) -> None:
         logger.debug("price cache unavailable: %s", exc)
 
 
+async def cache_prices(values: dict[str, float | Decimal | str], testnet: bool) -> None:
+    """Bulk cache (all-market mark price stream of the real-time feed) in one pipeline round-trip."""
+    if not values:
+        return
+    try:
+        pipe = get_redis().pipeline(transaction=False)
+        for symbol, price in values.items():
+            pipe.set(_key(symbol, testnet), str(price), ex=PRICE_TTL)
+        await pipe.execute()
+    except Exception as exc:  # pragma: no cover - infra dependent
+        logger.debug("price cache unavailable: %s", type(exc).__name__)
+
+
 async def get_price(symbol: str, testnet: bool) -> Decimal | None:
     try:
         value = await get_redis().get(_key(symbol, testnet))

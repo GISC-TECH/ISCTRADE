@@ -333,6 +333,15 @@ async def process_alert(sessions: SessionFactory, payload: dict[str, Any], *, fo
             record.error = "WhatsApp não configurado (WHATSAPP_ENABLED/credenciais)"
         db.add(record)
         await db.commit()
+        if ws_id:  # workspace alerts only: system-level alerts (tasks, streams) are not broadcast to every user
+            from app.services import realtime
+
+            await realtime.publish(
+                realtime.workspace_channel(ws_id),
+                realtime.message(
+                    "alert", {"id": record.id, "event": event, "severity": severity, "title": record.title}
+                ),
+            )
         safe_inc(ALERTS, event=event, status="created" if record.status == "pending" else record.status)
         return {"status": record.status, "alert_id": str(record.id)}
 

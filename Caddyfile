@@ -20,6 +20,16 @@
 		respond 404
 	}
 
+	# WebSocket do painel em tempo real: conexão longa, sem buffer; ao recarregar o Caddy as conexões
+	# existentes têm até 5 min para encerrar (o cliente reconecta sozinho com backoff).
+	@ws path /api/v1/ws
+	handle @ws {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+			stream_close_delay 5m
+		}
+	}
+
 	@api path /api/* /health /health/* /docs /redoc /openapi.json
 	handle @api {
 		reverse_proxy backend:8000

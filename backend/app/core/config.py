@@ -114,6 +114,15 @@ class Settings(BaseSettings):
     ECON_CALENDAR_MANUAL_EVENTS: str = ""  # JSON list: [{"title","time"(ISO),"country","impact"}]
     ECON_ALERT_LEAD_MINUTES: int = 60
 
+    # Real-time panel (WebSocket fed by Redis pub/sub)
+    REALTIME_ENABLED: bool = True
+    REALTIME_HEARTBEAT_SECONDS: int = 15
+    REALTIME_MAX_CONNECTIONS_PER_USER: int = 5
+    REALTIME_PRICE_THROTTLE_MS: int = 250  # <= 4 price/kline updates per second per symbol and connection
+    REALTIME_KLINE_TTL_SECONDS: int = 120  # kline subscriptions requested by clients expire without renewal
+    REALTIME_MARKET_FEED: bool = True  # streams worker publishes tickers/mark/klines
+    PAPER_ORDER_CHECK_SECONDS: int = 10  # paper resting limit orders + SL/TP checks (manual trading)
+
     RECONCILE_SECONDS: int = 60
     EQUITY_SNAPSHOT_SECONDS: int = 300
 

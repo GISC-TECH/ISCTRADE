@@ -7,8 +7,10 @@ from app.api.v1.endpoints import (
     auth,
     bots,
     history,
+    market,
     monitoring,
     news,
+    realtime_ws,
     scanner,
     strategies,
     workspaces,
@@ -27,3 +29,5 @@ api_router.include_router(monitoring.router, prefix="/monitoring", tags=["monito
 api_router.include_router(scanner.router, prefix="/scanner", tags=["scanner"])
 api_router.include_router(news.router, prefix="/news", tags=["news"])
 api_router.include_router(news.calendar_router, prefix="/calendar", tags=["calendar"])
+api_router.include_router(realtime_ws.router, tags=["realtime"])
+api_router.include_router(market.router, prefix="/market", tags=["market"])

@@ -251,6 +251,11 @@ async def ingest(sessions: async_sessionmaker[AsyncSession], client: httpx.Async
         alerts = await alert_high_impact(db)
         await prune(db)
         await db.commit()
+    if created:
+        from app.services import realtime
+
+        latest = [{"id": i.id, "title": i.title, "symbols": i.symbols, "source": i.source_name} for i in created[:10]]
+        await realtime.publish(realtime.GLOBAL, realtime.message("news", {"created": len(created), "latest": latest}))
     return {"fetched": len(items), "created": len(created), "analysed": analysed, "alerts": alerts, "errors": errors}
 
 

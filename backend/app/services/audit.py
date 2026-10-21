@@ -55,6 +55,7 @@ async def log_event(
         ip_address=ip_address,
         data=clean,
     )
+    from app.services import realtime
     from app.services.alerts.service import on_audit_event  # lazy: avoids an import cycle
 
     if db is None:
@@ -63,11 +64,13 @@ async def log_event(
         async with session_scope() as session:
             session.add(entry)
             on_audit_event(session, event, workspace_id=workspace_id, account_id=account_id, data=clean)
+            realtime.from_audit(session, event, workspace_id, account_id, clean)
             await session.commit()
         return entry
     db.add(entry)
     # Alerts derived from this event are dispatched only after the transaction commits.
     on_audit_event(db, event, workspace_id=workspace_id, account_id=account_id, data=clean)
+    realtime.from_audit(db, event, workspace_id, account_id, clean)
     if commit:
         await db.commit()
     return entry

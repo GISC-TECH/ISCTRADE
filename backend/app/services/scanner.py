@@ -255,6 +255,12 @@ async def run_and_store(
         if old:
             await db.execute(delete(MarketScan).where(MarketScan.id.in_(old)))
         await db.commit()
+    from app.services import realtime
+
+    top = [{"symbol": r["symbol"], "score": r["score"], "bias": r.get("bias")} for r in out["results"][:10]]
+    await realtime.publish(
+        realtime.GLOBAL, realtime.message("scanner", {"symbols_scanned": out["symbols_scanned"], "top": top})
+    )
     return {"symbols_scanned": out["symbols_scanned"], "duration_ms": out["duration_ms"], "errors": len(out["errors"])}
 
 

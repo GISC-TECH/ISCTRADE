@@ -22,22 +22,47 @@ from app.core.database import session_scope
 from app.core.logging import configure_logging
 from app.core.metrics import start_metrics_server
 from app.models import Account, AccountStatus, BotConfig, ExecutionMode
+from app.services import realtime
 from app.services.accounts import client_for_account
 from app.services.binance_ws import MarketStream, UserDataStream
 from app.services.health import write_streams_heartbeat
 from app.services.prices import cache_price
 from app.services.reconciler import Reconciler
 from app.strategy.state_machine import ACTIVE_STATES
+from app.workers.market_feed import MarketFeed
 
 logger = logging.getLogger("streams")
 REFRESH_SECONDS = 60
 HEARTBEAT_SECONDS = 15
+FEED_SYNC_SECONDS = 5
+
+
+def user_event_summary(event: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    """Non-sensitive summary of a user-data event for the real-time panel."""
+    kind = event.get("e")
+    if kind == "ORDER_TRADE_UPDATE":
+        o = event.get("o") or {}
+        return "order_update", {
+            "symbol": o.get("s"), "side": o.get("S"), "type": o.get("o"), "status": o.get("X"), "exec": o.get("x"),
+            "last_qty": o.get("l"), "last_price": o.get("L"), "avg_price": o.get("ap"), "realized_pnl": o.get("rp"),
+            "reduce_only": o.get("R"), "client_order_id": o.get("c"),
+        }  # fmt: skip
+    if kind == "ACCOUNT_UPDATE":
+        a = event.get("a") or {}
+        positions = [
+            {"symbol": p.get("s"), "amount": p.get("pa"), "entry_price": p.get("ep"), "unrealized_pnl": p.get("up")}
+            for p in a.get("P") or []
+        ]
+        balances = [{"asset": b.get("a"), "wallet": b.get("wb")} for b in a.get("B") or [] if b.get("a") == "USDT"]
+        return "account_update", {"reason": a.get("m"), "positions": positions, "balances": balances}
+    return None
 
 
 class StreamSupervisor:
     def __init__(self) -> None:
         self.user_streams: dict[uuid.UUID, tuple[UserDataStream, asyncio.Task]] = {}
         self.market: dict[bool, tuple[MarketStream, asyncio.Task, frozenset[str]]] = {}
+        self.feeds: list[MarketFeed] = []
         self._stop = asyncio.Event()
 
     def stop(self) -> None:
@@ -45,6 +70,11 @@ class StreamSupervisor:
 
     async def run(self) -> None:
         heartbeat = asyncio.create_task(self._heartbeat())
+        feeds = (
+            asyncio.create_task(self._feed_loop())
+            if settings.REALTIME_ENABLED and settings.REALTIME_MARKET_FEED
+            else None
+        )
         while not self._stop.is_set():
             try:
                 await self.refresh()
@@ -55,7 +85,23 @@ class StreamSupervisor:
             except TimeoutError:
                 pass
         heartbeat.cancel()
+        if feeds is not None:
+            feeds.cancel()
         await self.shutdown()
+
+    async def _feed_loop(self) -> None:
+        """Public market data for the real-time panel (tickers, mark/funding, requested klines)."""
+        self.feeds = [MarketFeed(testnet=False), MarketFeed(testnet=True)]
+        while not self._stop.is_set():
+            for feed in self.feeds:
+                try:
+                    await feed.sync()
+                except Exception:
+                    logger.exception("market feed sync failed")
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=FEED_SYNC_SECONDS)
+            except TimeoutError:
+                pass
 
     async def _heartbeat(self) -> None:
         """Liveness signal read by /health/ready and the btp_streams_heartbeat_age_seconds gauge."""
@@ -124,6 +170,7 @@ class StreamSupervisor:
     def _start_user_stream(self, account: Account) -> tuple[UserDataStream, asyncio.Task]:
         client = client_for_account(account)
         account_id = account.id
+        workspace_id = account.workspace_id
 
         async def handle(event: dict[str, Any]) -> None:
             async with session_scope() as db:
@@ -132,6 +179,12 @@ class StreamSupervisor:
                     return
                 await Reconciler(db, acc, client).handle_event(event)
                 await db.commit()
+            update = user_event_summary(event)
+            if update is not None:
+                await realtime.publish(
+                    realtime.workspace_channel(workspace_id),
+                    realtime.message(update[0], {"account_id": account_id, **update[1]}),
+                )
 
         stream = UserDataStream(client, handle, name=f"user-{account_id}")
         stream.alert_context = {"workspace_id": account.workspace_id, "account_id": account_id}
@@ -145,6 +198,8 @@ class StreamSupervisor:
         for stream, task, _ in self.market.values():
             stream.stop()
             task.cancel()
+        for feed in self.feeds:
+            feed.stop()
 
 
 async def main() -> None:

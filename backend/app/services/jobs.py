@@ -17,6 +17,7 @@ from app.core.metrics import BOT_TICKS, safe_inc
 from app.core.redis import get_redis
 from app.models import Account, AccountStatus, BotConfig, BotState, ExecutionMode
 from app.models.base import utcnow
+from app.services import realtime
 from app.services.audit import log_event
 from app.services.bot_runner import run_bot_tick
 from app.services.equity import compute_equity, open_positions, refresh_paper_marks, take_snapshot
@@ -86,6 +87,16 @@ async def tick_bot(
                 if close:
                     await close()
             safe_inc(BOT_TICKS, result=result.status)
+            await realtime.publish(
+                realtime.workspace_channel(bot.workspace_id),
+                realtime.message("bot", {
+                    "event": "bot.tick", "bot_id": bot.id, "name": bot.name, "symbol": bot.symbol,
+                    "state": bot.state, "last_tick_at": bot.last_tick_at, "last_error": bot.last_error,
+                    "result": result.status, "message": result.message, "filled": result.filled,
+                    "rejected": result.rejected, "reasons": result.reasons[:10],
+                    "auto": (bot.runtime or {}).get("auto"), "event_pause": (bot.runtime or {}).get("event_pause"),
+                }),
+            )  # fmt: skip
             return {"bot_id": str(bot_id), "status": result.status, "message": result.message,
                     "filled": result.filled, "rejected": result.rejected}  # fmt: skip
 
@@ -180,6 +191,10 @@ async def snapshot_account(
             if client is not None:
                 await client.close()
         await db.commit()
+        await realtime.publish(
+            realtime.workspace_channel(account.workspace_id),
+            realtime.message("account", {"account_id": account.id, "equity": snap.equity, "status": account.status}),
+        )
         return {"account_id": str(account_id), "equity": str(snap.equity)}
 
 
