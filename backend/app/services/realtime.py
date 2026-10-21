@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import queue as queue_mod
 import threading
 import time
 import uuid
@@ -136,23 +137,83 @@ async def publish(channel: str, msg: dict[str, Any]) -> bool:
         return memory_broker.publish(channel, data) > 0
 
 
-def _publish_sync(items: list[tuple[str, dict[str, Any]]]) -> None:
-    encoded = [(channel, encode(msg)) for channel, msg in items]
-    try:
-        from redis import Redis
+_sync_client = None
+_sync_lock = threading.Lock()
+_redis_down_until = 0.0
+REDIS_RETRY_SECONDS = 5.0
 
-        client = Redis.from_url(settings.REDIS_URL, socket_connect_timeout=0.5, socket_timeout=0.5)
+
+def _redis_sync():
+    """Process-wide sync Redis client (connection pool) for the after-commit publisher thread."""
+    global _sync_client
+    with _sync_lock:
+        if _sync_client is None:
+            from redis import Redis
+
+            _sync_client = Redis.from_url(settings.REDIS_URL, socket_connect_timeout=0.5, socket_timeout=0.5)
+        return _sync_client
+
+
+def _publish_sync(items: list[tuple[str, dict[str, Any]]]) -> None:
+    """Publish a batch in one pipeline over a pooled connection (was: new TCP connection per commit)."""
+    global _redis_down_until
+    encoded = [(channel, encode(msg)) for channel, msg in items]
+    if time.monotonic() >= _redis_down_until:
         try:
-            pipe = client.pipeline(transaction=False)
+            pipe = _redis_sync().pipeline(transaction=False)
             for channel, data in encoded:
                 pipe.publish(channel, data)
             pipe.execute()
-        finally:
-            client.close()
-    except Exception as exc:
-        logger.debug("realtime publish via redis failed: %s", type(exc).__name__)
-        for channel, data in encoded:
-            memory_broker.publish(channel, data)
+            return
+        except Exception as exc:
+            # skip Redis for a few seconds: an unreachable broker must not stall every commit's events
+            _redis_down_until = time.monotonic() + REDIS_RETRY_SECONDS
+            logger.debug("realtime publish via redis failed: %s", type(exc).__name__)
+    for channel, data in encoded:
+        memory_broker.publish(channel, data)
+
+
+class _AfterCommitPublisher:
+    """One daemon thread draining a bounded queue (was: one new thread per commit).
+
+    Keeps events in commit order and bounds memory if Redis is slow; never blocks the committing coroutine.
+    """
+
+    def __init__(self, maxsize: int = 10_000) -> None:
+        self._queue: queue_mod.Queue[list[tuple[str, dict[str, Any]]]] = queue_mod.Queue(maxsize=maxsize)
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def submit(self, items: list[tuple[str, dict[str, Any]]]) -> None:
+        self._ensure_thread()
+        try:
+            self._queue.put_nowait(items)
+        except queue_mod.Full:  # pragma: no cover - realtime is best effort; the DB is the source of truth
+            logger.warning("realtime publish queue full; dropping %d event(s)", len(items))
+
+    def _ensure_thread(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._run, daemon=True, name="realtime-publish")
+                self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            batch = self._queue.get()
+            try:  # coalesce whatever else is already waiting into the same pipeline
+                while len(batch) < 500:
+                    batch = batch + self._queue.get_nowait()
+            except queue_mod.Empty:
+                pass
+            try:
+                _publish_sync(batch)
+            except Exception:  # pragma: no cover
+                logger.exception("realtime publish failed")
+
+
+_publisher = _AfterCommitPublisher()
 
 
 def queue_event(db: AsyncSession, workspace_id: uuid.UUID | str | None, kind: str, data: dict[str, Any]) -> None:
@@ -170,7 +231,7 @@ def queue_event(db: AsyncSession, workspace_id: uuid.UUID | str | None, kind: st
 def _after_commit(session: Session) -> None:
     pending = session.info.pop(PENDING_KEY, None)
     if pending:
-        threading.Thread(target=_publish_sync, args=(pending,), daemon=True, name="realtime-publish").start()
+        _publisher.submit(pending)
 
 
 @sa_event.listens_for(Session, "after_soft_rollback")

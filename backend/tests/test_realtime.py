@@ -369,3 +369,26 @@ async def test_market_hub_decodes_once_for_all_sessions(db, monkeypatch) -> None
     hub = realtime_ws.market_hub()
     assert hub.task is None and not hub.listeners  # stopped with the last session
     assert not [s for s in realtime.memory_broker._subs if realtime.market_channel(False) in s[2]]
+
+
+async def test_after_commit_events_keep_commit_order_on_one_thread(db) -> None:
+    import threading
+
+    user, ws_row = await make_user_workspace(db)
+    await db.commit()
+    channel = realtime.workspace_channel(ws_row.id)
+    q = realtime.memory_broker.subscribe({channel})
+    try:
+        before = {t.name for t in threading.enumerate()}
+        for i in range(30):
+            realtime.queue_event(db, ws_row.id, "order", {"n": i})
+            await db.commit()
+        got: list[int] = []
+        while len(got) < 30:
+            _, data = await asyncio.wait_for(q.get(), 3)
+            got.append(json.loads(data)["data"]["n"])
+        assert got == list(range(30))
+        publishers = [t for t in threading.enumerate() if t.name == "realtime-publish"]
+        assert len(publishers) == 1 and "realtime-publish" in before | {publishers[0].name}
+    finally:
+        realtime.memory_broker.unsubscribe(q)
