@@ -50,6 +50,12 @@ FIELD_LABELS: dict[str, str] = {
     "forecast": "Projeção",
     "previous": "Anterior",
     "until": "Pausado até",
+    "action": "Ação",
+    "order_type": "Tipo",
+    "stop_loss": "Stop loss",
+    "take_profit": "Take profit",
+    "result": "Resultado",
+    "closed": "Posições fechadas",
     "url": "Link",
 }
 

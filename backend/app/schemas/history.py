@@ -22,6 +22,7 @@ class OrderRead(BaseModel):
     price: Decimal | None
     stop_price: Decimal | None
     stop_loss: Decimal | None
+    take_profit: Decimal | None = None
     leverage: int
     reduce_only: bool
     executed_qty: Decimal
@@ -87,5 +88,6 @@ class PositionRead(BaseModel):
     unrealized_pnl: Decimal
     leverage: int
     stop_loss: Decimal | None
+    take_profit: Decimal | None = None
     is_paper: bool
     updated_at: datetime

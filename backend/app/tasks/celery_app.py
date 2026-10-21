@@ -7,7 +7,13 @@ celery_app = Celery(
     "trading",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=["app.tasks.bot_tasks", "app.tasks.alert_tasks", "app.tasks.scanner_tasks", "app.tasks.news_tasks"],
+    include=[
+        "app.tasks.bot_tasks",
+        "app.tasks.alert_tasks",
+        "app.tasks.scanner_tasks",
+        "app.tasks.news_tasks",
+        "app.tasks.trading_tasks",
+    ],
 )
 celery_app.conf.update(
     task_serializer="json",
@@ -30,6 +36,7 @@ celery_app.conf.update(
         "news-ingest": {"task": "news.ingest", "schedule": float(settings.NEWS_REFRESH_SECONDS)},
         "calendar-refresh": {"task": "calendar.refresh", "schedule": float(settings.ECON_CALENDAR_REFRESH_SECONDS)},
         "calendar-alerts": {"task": "calendar.alerts", "schedule": 60.0},
+        "paper-orders": {"task": "paper.process_orders", "schedule": float(settings.PAPER_ORDER_CHECK_SECONDS)},
         "alerts-daily-summary": {
             "task": "alerts.daily_summary",
             "schedule": crontab(hour=settings.ALERT_DAILY_SUMMARY_HOUR_UTC, minute=5),

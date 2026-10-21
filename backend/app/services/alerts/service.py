@@ -180,10 +180,10 @@ def alert_from_audit(
     if event == "position.opened":
         fields = {k: data.get(k) for k in ("symbol", "side", "quantity", "price", "leverage")}
         return build_payload(AlertEvent.POSITION_OPENED, **ctx, **fields)
-    if event in ("position.closed", "position.stop_loss"):
+    if event in ("position.closed", "position.stop_loss", "position.take_profit"):
         fields = {k: data.get(k) for k in ("symbol", "side", "quantity", "price", "realized_pnl", "reason")}
-        if event == "position.stop_loss" and not fields.get("reason"):
-            fields["reason"] = "stop loss"
+        if event != "position.closed" and not fields.get("reason"):
+            fields["reason"] = "stop loss" if event == "position.stop_loss" else "take profit"
         return build_payload(AlertEvent.POSITION_CLOSED, **ctx, **fields)
     if event == "bot.error":
         return build_payload(
@@ -204,6 +204,13 @@ def alert_from_audit(
             until=data.get("until"),
             **ctx,
         )
+    if event.startswith("manual."):
+        action = event.split(".", 1)[1]
+        keys = ("symbol", "side", "order_type", "quantity", "price", "stop_loss", "take_profit", "leverage",
+                "result", "reason", "closed", "mode")  # fmt: skip
+        fields = {k: data.get(k) for k in keys if data.get(k) is not None}
+        severity = "warning" if action == "order_blocked" or data.get("result") == "rejected" else "info"
+        return build_payload(AlertEvent.MANUAL_ACTION, severity=severity, action=action, **ctx, **fields)
     if event == "reconcile.changes" and int(data.get("positions_changed") or 0) > 0:
         return build_payload(
             AlertEvent.RECONCILER_MISMATCH,

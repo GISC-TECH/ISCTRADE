@@ -104,6 +104,9 @@ class Executor(Protocol):
         reduce_only: bool,
         leverage: int,
         tag: str,
+        order_type: OrderType = OrderType.MARKET,
+        limit_price: Decimal | None = None,
+        take_profit: Decimal | None = None,
     ) -> ExecutionResult: ...
 
 
@@ -133,7 +136,28 @@ class PaperExecutor:
         leverage: int,
         tag: str,
         fill_price: Decimal | None = None,
+        order_type: OrderType = OrderType.MARKET,
+        limit_price: Decimal | None = None,
+        take_profit: Decimal | None = None,
+        resting_order: Order | None = None,
     ) -> ExecutionResult:
+        if order_type == OrderType.LIMIT and resting_order is None:
+            if limit_price is None:
+                return ExecutionResult(False, "limit_price_required")
+            marketable = (side == OrderSide.BUY and ref_price <= limit_price) or (
+                side == OrderSide.SELL and ref_price >= limit_price
+            )
+            if not marketable:
+                order = Order(
+                    workspace_id=account.workspace_id, account_id=account.id, bot_id=bot.id if bot else None,
+                    symbol=symbol, side=side, type=OrderType.LIMIT, status=OrderStatus.NEW, quantity=quantity,
+                    price=limit_price, stop_loss=stop_loss, take_profit=take_profit, leverage=leverage,
+                    reduce_only=reduce_only, client_order_id=new_client_order_id(), is_paper=True, reason=tag or None,
+                )  # fmt: skip
+                db.add(order)
+                await db.flush()
+                return ExecutionResult(True, "resting", order, None, Decimal("0"))
+            fill_price = ref_price  # marketable limit: fills at the (better) market price, no slippage
         pos = await get_or_create_position(db, account, symbol, leverage)
         if reduce_only:
             opposite = (pos.quantity > 0 and side == OrderSide.SELL) or (pos.quantity < 0 and side == OrderSide.BUY)
@@ -147,27 +171,34 @@ class PaperExecutor:
         outcome = apply_fill(pos.quantity, pos.entry_price, side, quantity, fill_price)
         fee = quantity * fill_price * self.fee_rate
 
-        order = Order(
-            workspace_id=account.workspace_id,
-            account_id=account.id,
-            bot_id=bot.id if bot else None,
-            symbol=symbol,
-            side=side,
-            type=OrderType.MARKET,
-            status=OrderStatus.FILLED,
-            quantity=quantity,
-            price=None,
-            stop_loss=stop_loss,
-            leverage=leverage,
-            reduce_only=reduce_only,
-            executed_qty=quantity,
-            avg_price=fill_price,
-            client_order_id=new_client_order_id(),
-            is_paper=True,
-            reason=tag or None,
-        )
-        db.add(order)
-        await db.flush()
+        if resting_order is not None:
+            order = resting_order
+            order.status, order.executed_qty, order.avg_price, order.quantity = (
+                OrderStatus.FILLED, quantity, fill_price, quantity,
+            )  # fmt: skip
+        else:
+            order = Order(
+                workspace_id=account.workspace_id,
+                account_id=account.id,
+                bot_id=bot.id if bot else None,
+                symbol=symbol,
+                side=side,
+                type=order_type,
+                status=OrderStatus.FILLED,
+                quantity=quantity,
+                price=limit_price if order_type == OrderType.LIMIT else None,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                leverage=leverage,
+                reduce_only=reduce_only,
+                executed_qty=quantity,
+                avg_price=fill_price,
+                client_order_id=new_client_order_id(),
+                is_paper=True,
+                reason=tag or None,
+            )
+            db.add(order)
+            await db.flush()
         db.add(
             Trade(
                 workspace_id=account.workspace_id,
@@ -191,8 +222,12 @@ class PaperExecutor:
         pos.leverage = leverage
         if outcome.quantity == 0:
             pos.stop_loss = None
-        elif stop_loss is not None and not reduce_only:
-            pos.stop_loss = stop_loss
+            pos.take_profit = None
+        elif not reduce_only:
+            if stop_loss is not None:
+                pos.stop_loss = stop_loss
+            if take_profit is not None:
+                pos.take_profit = take_profit
         account.paper_balance = Decimal(account.paper_balance) + outcome.realized_pnl - fee
         return ExecutionResult(True, "filled", order, fill_price, quantity, outcome.realized_pnl, fee)
 
@@ -221,17 +256,25 @@ class LiveExecutor:
         reduce_only: bool,
         leverage: int,
         tag: str,
+        order_type: OrderType = OrderType.MARKET,
+        limit_price: Decimal | None = None,
+        take_profit: Decimal | None = None,
     ) -> ExecutionResult:
+        is_limit = order_type == OrderType.LIMIT
+        if is_limit and limit_price is None:
+            return ExecutionResult(False, "limit_price_required")
         order = Order(
             workspace_id=account.workspace_id,
             account_id=account.id,
             bot_id=bot.id if bot else None,
             symbol=symbol,
             side=side,
-            type=OrderType.MARKET,
+            type=OrderType.LIMIT if is_limit else OrderType.MARKET,
             status=OrderStatus.PENDING,
             quantity=quantity,
+            price=limit_price if is_limit else None,
             stop_loss=stop_loss,
+            take_profit=take_profit,
             leverage=leverage,
             reduce_only=reduce_only,
             client_order_id=new_client_order_id(),
@@ -240,14 +283,16 @@ class LiveExecutor:
         )
         db.add(order)
         await db.flush()
+        extra: dict = {"price": limit_price, "time_in_force": "GTC"} if is_limit else {}
         resp = await self.client.place_order(
             symbol=symbol,
             side=side.value,
-            order_type="MARKET",
+            order_type="LIMIT" if is_limit else "MARKET",
             quantity=quantity,
             reduce_only=reduce_only or None,
             client_order_id=order.client_order_id,
             newOrderRespType="RESULT",
+            **extra,
         )
         order.exchange_order_id = str(resp.get("orderId"))
         order.status = OrderStatus(resp.get("status", "NEW"))
@@ -286,8 +331,31 @@ class LiveExecutor:
             )
             stop.exchange_order_id = str(sresp.get("orderId"))
             stop.status = OrderStatus(sresp.get("status", "NEW"))
+        if take_profit is not None and not reduce_only:
+            await self._protective(db, account, bot, symbol, side, quantity, leverage, tag, take_profit)
         # Fills (Trade rows) and positions are synchronized by the reconciler / user-data stream.
         return ExecutionResult(True, order.status.value, order, avg or ref_price, order.executed_qty)
+
+    async def _protective(
+        self, db: AsyncSession, account: Account, bot: BotConfig | None, symbol: str, side: OrderSide,
+        quantity: Decimal, leverage: int, tag: str, take_profit: Decimal,
+    ) -> None:  # fmt: skip
+        """Exchange-side TAKE_PROFIT_MARKET (closePosition) protecting a live entry."""
+        tp_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
+        tp = Order(
+            workspace_id=account.workspace_id, account_id=account.id, bot_id=bot.id if bot else None, symbol=symbol,
+            side=tp_side, type=OrderType.TAKE_PROFIT_MARKET, status=OrderStatus.PENDING, quantity=quantity,
+            stop_price=take_profit, leverage=leverage, reduce_only=True, client_order_id=new_client_order_id(),
+            is_paper=False, reason=f"{tag}:take_profit",
+        )  # fmt: skip
+        db.add(tp)
+        await db.flush()
+        resp = await self.client.place_order(
+            symbol=symbol, side=tp_side.value, order_type="TAKE_PROFIT_MARKET", stop_price=take_profit,
+            close_position=True, client_order_id=tp.client_order_id, workingType="MARK_PRICE",
+        )  # fmt: skip
+        tp.exchange_order_id = str(resp.get("orderId"))
+        tp.status = OrderStatus(resp.get("status", "NEW"))
 
 
 async def is_global_kill_switch_on(db: AsyncSession) -> bool:
@@ -316,9 +384,28 @@ class OrderService:
         risk_state: AccountRiskState,
         bot: BotConfig | None = None,
         filters: SymbolFilters | None = None,
+        order_type: OrderType = OrderType.MARKET,
+        limit_price: Decimal | None = None,
+        take_profit: Decimal | None = None,
+        user_id: uuid.UUID | None = None,
     ) -> ExecutionResult:
+        """`ref_price` is the expected entry: the market price, or the limit price for LIMIT orders."""
         filters = filters or default_filters(symbol)
-        user_id = None
+        if order_type == OrderType.LIMIT:
+            if limit_price is None or limit_price <= 0:
+                return await self._reject(
+                    db, account, bot, intent, symbol, Decimal("0"), leverage, "limit_price_required"
+                )
+            limit_price = filters.round_price(limit_price)
+        if take_profit is not None and not intent.reduce_only:
+            entry = limit_price if order_type == OrderType.LIMIT else ref_price
+            wrong_side = take_profit <= entry if intent.side == OrderSide.BUY else take_profit >= entry
+            if take_profit <= 0 or wrong_side:
+                return await self._reject(
+                    db, account, bot, intent, symbol, Decimal("0"), leverage,
+                    "take_profit_invalid: long TP must be above entry, short TP below",
+                )  # fmt: skip
+            take_profit = filters.round_price(take_profit)
 
         if not intent.reduce_only and await is_global_kill_switch_on(db):
             return await self._reject(db, account, bot, intent, symbol, Decimal("0"), leverage, "global_kill_switch")
@@ -335,7 +422,8 @@ class OrderService:
             return await self._reject(db, account, bot, intent, symbol, qty, leverage, "size_zero_after_rounding")
         stop = filters.round_price(intent.stop_loss) if intent.stop_loss is not None else None
 
-        problem = filters.check(qty, ref_price, intent.reduce_only)
+        risk_price = limit_price if order_type == OrderType.LIMIT and limit_price is not None else ref_price
+        problem = filters.check(qty, risk_price, intent.reduce_only)
         if problem:
             return await self._reject(db, account, bot, intent, symbol, qty, leverage, problem)
 
@@ -343,7 +431,7 @@ class OrderService:
             symbol=symbol,
             side=intent.side,
             quantity=qty,
-            entry_price=ref_price,
+            entry_price=risk_price,
             stop_loss=stop,
             leverage=leverage,
             reduce_only=intent.reduce_only,
@@ -368,15 +456,17 @@ class OrderService:
                 reduce_only=intent.reduce_only,
                 leverage=leverage,
                 tag=intent.tag,
+                **self._extra(order_type, limit_price, take_profit),
             )
         except Exception as exc:  # exchange errors -> rejected order, bot keeps running
             logger.exception("order execution failed")
             return await self._reject(db, account, bot, intent, symbol, qty, leverage, f"execution_error: {exc}"[:255])
         if result.ok:
-            safe_inc(ORDERS, mode=self._mode, result="filled" if self.executor.is_paper else "submitted", reason="none")
+            filled = self.executor.is_paper and result.reason == "filled"
+            safe_inc(ORDERS, mode=self._mode, result="filled" if filled else "submitted", reason="none")
             await log_event(
                 db,
-                "order.filled" if self.executor.is_paper else "order.submitted",
+                "order.filled" if filled else "order.submitted",
                 user_id=user_id,
                 workspace_id=account.workspace_id,
                 account_id=account.id,
@@ -387,8 +477,13 @@ class OrderService:
                 tag=intent.tag,
                 paper=self.executor.is_paper,
                 mode=self._mode,
+                order_type=order_type.value,
+                limit_price=limit_price,
+                stop_loss=stop,
+                take_profit=take_profit,
             )
-            await self._position_events(db, account, symbol, before_qty, result, leverage)
+            if result.reason != "resting":
+                await self._position_events(db, account, symbol, before_qty, result, leverage)
         else:
             await self._reject(db, account, bot, intent, symbol, qty, leverage, result.reason)
         return result
@@ -423,6 +518,16 @@ class OrderService:
                 db, "position.opened", **ctx, side="LONG" if after > 0 else "SHORT", quantity=abs(after),
                 price=result.fill_price, leverage=leverage,
             )  # fmt: skip
+
+    @staticmethod
+    def _extra(order_type: OrderType, limit_price: Decimal | None, take_profit: Decimal | None) -> dict:
+        """Only pass the new kwargs when used, so custom executors with the original signature keep working."""
+        extra: dict = {}
+        if order_type != OrderType.MARKET:
+            extra.update(order_type=order_type, limit_price=limit_price)
+        if take_profit is not None:
+            extra["take_profit"] = take_profit
+        return extra
 
     @property
     def _mode(self) -> str:

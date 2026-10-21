@@ -32,6 +32,7 @@ class AlertEvent(str, Enum):
     NEWS_HIGH_IMPACT = "news_high_impact"
     ECONOMIC_EVENT = "economic_event"
     BOT_EVENT_PAUSE = "bot_event_pause"
+    MANUAL_ACTION = "manual_action"
     TEST = "test"
 
 
@@ -61,6 +62,9 @@ EVENTS: dict[str, EventSpec] = {
     ),
     AlertEvent.ECONOMIC_EVENT.value: EventSpec(Severity.INFO, True, "Evento econômico de alto impacto em breve"),
     AlertEvent.BOT_EVENT_PAUSE.value: EventSpec(Severity.INFO, True, "Bot pausou novas entradas (evento econômico)"),
+    AlertEvent.MANUAL_ACTION.value: EventSpec(
+        Severity.INFO, True, "Ação manual de trading (ordem, fechamento, alavancagem)", throttled=False
+    ),
     AlertEvent.TEST.value: EventSpec(Severity.INFO, True, "Alerta de teste", throttled=False),
 }
 

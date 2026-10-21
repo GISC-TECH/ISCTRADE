@@ -28,6 +28,7 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     price: Mapped[Decimal | None] = mapped_column()
     stop_price: Mapped[Decimal | None] = mapped_column()
     stop_loss: Mapped[Decimal | None] = mapped_column()
+    take_profit: Mapped[Decimal | None] = mapped_column()
     leverage: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     reduce_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     executed_qty: Mapped[Decimal] = mapped_column(default=Decimal("0"), nullable=False)
@@ -75,6 +76,7 @@ class Position(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     unrealized_pnl: Mapped[Decimal] = mapped_column(default=Decimal("0"), nullable=False)
     leverage: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     stop_loss: Mapped[Decimal | None] = mapped_column()
+    take_profit: Mapped[Decimal | None] = mapped_column()
     is_paper: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 

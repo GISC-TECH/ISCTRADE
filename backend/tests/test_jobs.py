@@ -27,14 +27,16 @@ def test_beat_schedule_registered() -> None:
         "news.ingest",
         "calendar.refresh",
         "calendar.alerts",
+        "paper.process_orders",
     }
     import app.tasks.alert_tasks  # noqa: F401
     import app.tasks.news_tasks  # noqa: F401
     import app.tasks.scanner_tasks  # noqa: F401
+    import app.tasks.trading_tasks  # noqa: F401
 
     for name in ("bots.tick", "bots.start", "accounts.snapshot", "accounts.reconcile", "risk.daily_reset",
                  "alerts.process", "alerts.deliver", "alerts.daily_summary", "scanner.run",
-                 "news.ingest", "calendar.refresh", "calendar.alerts"):  # fmt: skip
+                 "news.ingest", "calendar.refresh", "calendar.alerts", "paper.process_orders"):  # fmt: skip
         assert name in celery_app.tasks
 
 
