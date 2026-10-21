@@ -66,6 +66,7 @@ async def create_bot(
         interval=data.interval,
         leverage=data.leverage,
         params=params,
+        options=data.options.model_dump(),
         state=BotState.IDLE,
         runtime={},
     )
@@ -92,10 +93,13 @@ async def update_bot(
 ):
     bot = await _get_bot(bot_id, ctx, db)
     changes = data.model_dump(exclude_unset=True)
-    if bot.state in ACTIVE_STATES and ({"params", "interval", "leverage"} & set(changes)):
+    if bot.state in ACTIVE_STATES and ({"params", "interval", "leverage", "options"} & set(changes)):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Pare o bot antes de alterar a configuração")
     if "params" in changes:
         changes["params"] = _validate(bot.strategy_key, changes["params"])
+        bot.runtime = {}
+    if "options" in changes:
+        changes["options"] = data.options.model_dump() if data.options else {}
         bot.runtime = {}
     if "leverage" in changes:
         account = await get_account_in_workspace(bot.account_id, ctx, db)

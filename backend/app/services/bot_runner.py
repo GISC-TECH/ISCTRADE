@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Account, AccountStatus, BotConfig, BotState, ExecutionMode, OrderSide
 from app.models.base import utcnow
+from app.schemas.bot_options import BotOptions
 from app.services.audit import log_event
 from app.services.equity import compute_equity, refresh_paper_marks, roll_risk_baselines
 from app.services.execution import (
@@ -85,65 +86,157 @@ class BotRunner:
         if account.status != AccountStatus.RUNNING:
             return TickResult("skipped", "account_not_running")
 
-        strategy = build_strategy(bot.strategy_key, bot.params)
-        if self.filters is None and self.client is not None:
-            self.filters = await self.client.get_symbol_filters(bot.symbol)
+        opts = BotOptions.load(bot.options)
+        runtime = dict(bot.runtime or {})
+        auto = opts.auto_symbols.enabled
+        sym_states: dict[str, dict] = dict(runtime.get("symbols") or {}) if auto else {}
+        symbols = await self._auto_symbols(opts, sym_states) if auto else [bot.symbol]
+        if not symbols:
+            return TickResult("skipped", "no_symbols")
 
-        candles = await self.market.get_closed_candles(bot.symbol, bot.interval, max(strategy.warmup + 5, 100))
+        result = TickResult("ok")
+        processed = 0
+        skip_reason = "no_new_candle"
+        for symbol in symbols:
+            state = dict(sym_states.get(symbol) or {}) if auto else runtime
+            new_state, skip = await self._tick_symbol(symbol, state, result, auto, opts, sym_states)
+            if new_state is None:
+                skip_reason = skip or skip_reason
+                continue
+            processed += 1
+            if auto:
+                sym_states[symbol] = new_state
+            else:
+                runtime = new_state
+            if result.status == "killed":
+                break
+        if processed == 0:
+            return TickResult("skipped", skip_reason)
+        if auto:
+            keep = set(symbols)
+            runtime = {**runtime, "symbols": {k: v for k, v in sym_states.items() if k in keep}, "auto": symbols}
+            self._save(runtime, None)
+        else:
+            self._save(runtime, runtime.get("last_candle"))
+        return result
+
+    async def _auto_symbols(self, opts: BotOptions, sym_states: dict[str, dict]) -> list[str]:
+        """Symbols with an open position managed by this bot first, then the scanner's top-N."""
+        from app.services.scanner import top_symbols
+
+        held = []
+        for symbol in sym_states:
+            pos = await get_position(self.db, self.account, symbol)
+            if pos is not None and pos.quantity != 0:
+                held.append(symbol)
+        a = opts.auto_symbols
+        top = await top_symbols(
+            self.db, a.top_n, min_score=a.min_score, strategy_key=self.bot.strategy_key if a.prefer_signals else None
+        )
+        return held + [s for s in top if s not in held]
+
+    async def _open_positions(self, symbols: list[str]) -> int:
+        n = 0
+        for symbol in symbols:
+            pos = await get_position(self.db, self.account, symbol)
+            if pos is not None and pos.quantity != 0:
+                n += 1
+        return n
+
+    async def _entry_block(
+        self, symbol: str, intent, auto: bool, opts: BotOptions, sym_states: dict[str, dict]
+    ) -> str | None:
+        """Bot-level gates for NEW exposure (reduce-only exits always pass). Returns a reason or None."""
+        if intent.reduce_only:
+            return None
+        if auto:
+            managed = [s for s in {*sym_states, symbol} if s != symbol]
+            if await self._open_positions(managed) >= opts.auto_symbols.max_positions:
+                return "max_concurrent_positions"
+        return None
+
+    async def _tick_symbol(
+        self,
+        symbol: str,
+        state: dict,
+        result: TickResult,
+        auto: bool,
+        opts: BotOptions,
+        sym_states: dict[str, dict],
+    ) -> tuple[dict | None, str | None]:
+        bot, account = self.bot, self.account
+        strategy = build_strategy(bot.strategy_key, bot.params)
+        filters = self.filters if not auto else None
+        if filters is None and self.client is not None:
+            filters = await self.client.get_symbol_filters(symbol)
+            if not auto:
+                self.filters = filters
+
+        try:
+            candles = await self.market.get_closed_candles(symbol, bot.interval, max(strategy.warmup + 5, 100))
+        except Exception:
+            if not auto:
+                raise
+            logger.warning("auto bot %s: no market data for %s", bot.id, symbol)
+            return None, "no_market_data"
         if not candles:
-            return TickResult("skipped", "no_market_data")
-        state = dict(bot.runtime or {})
+            return None, "no_market_data"
         last = candles[-1]
         last_seen = state.get("last_candle")
         if last_seen is not None and last.open_time <= int(last_seen):
-            return TickResult("skipped", "no_new_candle")
+            return None, "no_new_candle"
         new_candles = [c for c in candles if last_seen is None or c.open_time > int(last_seen)]
         price = Decimal(str(last.close))
-        result = TickResult("ok")
 
         if self.client is not None:
             from app.services.reconciler import Reconciler
 
-            await Reconciler(self.db, account, self.client).sync_positions([bot.symbol])
+            await Reconciler(self.db, account, self.client).sync_positions([symbol])
 
         # Paper mode: simulate protective stops on the candles since the last tick.
-        pos = await get_position(self.db, account, bot.symbol)
+        pos = await get_position(self.db, account, symbol)
         if isinstance(self.executor, PaperExecutor) and pos is not None and pos.quantity != 0:
             for c in new_candles:
                 if stop_triggered(pos.quantity, pos.stop_loss, Decimal(str(c.low)), Decimal(str(c.high))):
                     stop_price = Decimal(pos.stop_loss)
                     side = OrderSide.SELL if pos.quantity > 0 else OrderSide.BUY
                     await self.executor.execute(
-                        self.db, account, bot, bot.symbol, side, abs(pos.quantity), stop_price,
+                        self.db, account, bot, symbol, side, abs(pos.quantity), stop_price,
                         stop_loss=None, reduce_only=True, leverage=bot.leverage, tag="stop_loss",
                         fill_price=stop_price,
                     )  # fmt: skip
                     await log_event(
                         self.db, "position.stop_loss", level="warning", workspace_id=account.workspace_id,
-                        account_id=account.id, symbol=bot.symbol, price=stop_price,
+                        account_id=account.id, symbol=symbol, price=stop_price,
                     )  # fmt: skip
-                    ctx_stop = self._context(candles, Decimal(0), Decimal(0), Decimal(0), state)
+                    ctx_stop = self._context(candles, Decimal(0), Decimal(0), Decimal(0), state, symbol)
                     strategy.on_stop_out(ctx_stop)
                     break
 
         if account.execution_mode != ExecutionMode.LIVE:
-            await refresh_paper_marks(self.db, account, {bot.symbol: price})
+            await refresh_paper_marks(self.db, account, {symbol: price})
         equity = (await compute_equity(self.db, account, self.client)).equity
         roll_risk_baselines(account, equity)
         risk_state = self.rm.from_account(account, equity)
         if self.rm.is_kill_switch_triggered(risk_state):
             await trigger_account_kill_switch(self.db, account, f"drawdown {self.rm.drawdown_pct(risk_state):.2f}%")
-            self._save(state, last.open_time)
-            return TickResult("killed", "drawdown_kill_switch")
+            result.status, result.message = "killed", "drawdown_kill_switch"
+            return {**state, "last_candle": last.open_time}, None
 
-        pos = await get_position(self.db, account, bot.symbol)
+        pos = await get_position(self.db, account, symbol)
         ctx = self._context(
-            candles, pos.quantity if pos else Decimal(0), pos.entry_price if pos else Decimal(0), equity, state
+            candles, pos.quantity if pos else Decimal(0), pos.entry_price if pos else Decimal(0), equity, state, symbol
         )
         for intent in strategy.on_candle(ctx):
+            block = await self._entry_block(symbol, intent, auto, opts, sym_states)
+            if block:
+                strategy.on_result(intent, False, ctx)
+                result.rejected += 1
+                result.reasons.append(block)
+                continue
             res = await self.orders.submit(
-                self.db, account, intent, symbol=bot.symbol, ref_price=price, leverage=bot.leverage,
-                risk_state=risk_state, bot=bot, filters=self.filters,
+                self.db, account, intent, symbol=symbol, ref_price=price, leverage=bot.leverage,
+                risk_state=risk_state, bot=bot, filters=filters,
             )  # fmt: skip
             strategy.on_result(intent, res.ok, ctx)
             if res.ok:
@@ -155,19 +248,18 @@ class BotRunner:
                 await trigger_account_kill_switch(self.db, account, res.reason)
                 result.status, result.message = "killed", res.reason
                 break
-            pos = await get_position(self.db, account, bot.symbol)
+            pos = await get_position(self.db, account, symbol)
             ctx.position_qty = pos.quantity if pos else Decimal(0)
             ctx.position_entry = pos.entry_price if pos else Decimal(0)
             equity = (await compute_equity(self.db, account, self.client)).equity
             ctx.equity = equity
             risk_state = self.rm.from_account(account, equity)
 
-        self._save(ctx.state, last.open_time)
-        return result
+        return {**ctx.state, "last_candle": last.open_time}, None
 
-    def _context(self, candles, qty, entry, equity, state) -> StrategyContext:
+    def _context(self, candles, qty, entry, equity, state, symbol: str | None = None) -> StrategyContext:
         return StrategyContext(
-            symbol=self.bot.symbol,
+            symbol=symbol or self.bot.symbol,
             candles=candles,
             position_qty=Decimal(qty),
             position_entry=Decimal(entry),
@@ -177,9 +269,10 @@ class BotRunner:
             state=state,
         )
 
-    def _save(self, state: dict, last_candle: int) -> None:
+    def _save(self, state: dict, last_candle: int | None) -> None:
         new_state = dict(state)
-        new_state["last_candle"] = last_candle
+        if last_candle is not None:
+            new_state["last_candle"] = last_candle
         self.bot.runtime = new_state  # reassign -> SQLAlchemy detects the JSON change
         self.bot.last_tick_at = utcnow()
         self.bot.last_error = None

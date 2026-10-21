@@ -162,6 +162,14 @@ class BinanceFuturesClient:
     async def get_mark_price(self, symbol: str) -> dict:
         return await self._request("GET", "/fapi/v1/premiumIndex", {"symbol": symbol})
 
+    async def get_24h_tickers(self) -> list[dict]:
+        """24h rolling statistics for every symbol (weight 40)."""
+        return await self._request("GET", "/fapi/v1/ticker/24hr")
+
+    async def get_premium_index_all(self) -> list[dict]:
+        """Mark price, index price and last funding rate for every symbol."""
+        return await self._request("GET", "/fapi/v1/premiumIndex")
+
     async def get_ticker_price(self, symbol: str) -> Decimal:
         data = await self._request("GET", "/fapi/v1/ticker/price", {"symbol": symbol})
         return Decimal(str(data["price"]))

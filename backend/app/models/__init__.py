@@ -13,6 +13,7 @@ from app.models.enums import (
     OrderStatus,
     OrderType,
 )
+from app.models.scanner import MarketScan
 from app.models.system import SystemSetting
 from app.models.trading import EquitySnapshot, Order, Position, Trade
 from app.models.user import User
@@ -41,4 +42,5 @@ __all__ = [
     "SystemSetting",
     "AlertSettings",
     "AlertRecord",
+    "MarketScan",
 ]

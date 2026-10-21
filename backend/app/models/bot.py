@@ -30,6 +30,8 @@ class BotConfig(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     state: Mapped[BotState] = mapped_column(str_enum(BotState), default=BotState.IDLE, nullable=False, index=True)
     # Runtime strategy state persisted between ticks (e.g. grid levels held).
     runtime: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    # Bot-level options independent of the strategy (auto symbol selection, news filter, event pause...).
+    options: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}", nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_tick_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)

@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     PAPER_SLIPPAGE_BPS: float = 2.0
     KILL_SWITCH_CLOSE_POSITIONS: bool = True
     BOT_TICK_SECONDS: int = 30
+
+    # Market scanner (public market data only; no API keys needed)
+    SCANNER_ENABLED: bool = True
+    SCANNER_USE_TESTNET: bool = False  # public mainnet data is read-only and much more complete
+    SCANNER_INTERVAL: str = "1h"
+    SCANNER_REFRESH_SECONDS: int = 300
+    SCANNER_MAX_SYMBOLS: int = 40  # most liquid symbols analysed with klines
+    SCANNER_MIN_QUOTE_VOLUME: float = 50_000_000.0  # 24h volume in USDT
+    SCANNER_KLINES_CACHE_SECONDS: int = 120
+    SCANNER_KEEP_SNAPSHOTS: int = 48
     RECONCILE_SECONDS: int = 60
     EQUITY_SNAPSHOT_SECONDS: int = 300
 
