@@ -270,3 +270,35 @@ async def test_live_protective_orders_are_sent_concurrently(db, monkeypatch) -> 
     assert peak == 2  # SL and TP in flight together, after the entry
     stop = await db.scalar(select(Order).where(Order.type == "STOP_MARKET"))
     assert stop.exchange_order_id == "2" and stop.status == OrderStatus.NEW  # SL still recorded when TP fails
+
+
+async def test_get_position_is_memoized_per_session_and_reloaded_when_stale(db) -> None:
+    from sqlalchemy import event
+
+    from app.core.database import engine
+    from app.services.execution import get_or_create_position, get_position
+
+    _, ws = await make_user_workspace(db)
+    acc = await make_account(db, ws)
+    assert await get_position(db, acc, "BTCUSDT") is None  # misses are not cached
+    pos = await get_or_create_position(db, acc, "BTCUSDT", leverage=2)
+    await db.commit()
+
+    statements: list[str] = []
+    listener = lambda *a, **k: statements.append(a[2])  # noqa: E731
+    event.listen(engine.sync_engine, "before_cursor_execute", listener)
+    try:
+        for _ in range(5):
+            assert await get_position(db, acc, "BTCUSDT") is pos
+        assert not [s for s in statements if "FROM positions" in s]  # served from the session, no round trip
+
+        pos.quantity = D("1")
+        await db.rollback()  # expires every loaded object: the next lookup must hit the database
+        await db.refresh(acc)
+        again = await get_position(db, acc, "BTCUSDT")
+        assert again is pos and again.quantity == 0
+        assert len([s for s in statements if "FROM positions" in s]) == 1
+        assert await get_position(db, acc, "BTCUSDT") is pos
+        assert len([s for s in statements if "FROM positions" in s]) == 1
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", listener)

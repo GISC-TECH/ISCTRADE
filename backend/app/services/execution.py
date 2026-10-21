@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Protocol
 
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,8 +67,29 @@ def new_client_order_id() -> str:
     return f"btp-{uuid.uuid4().hex[:28]}"
 
 
+_POSITIONS_KEY = "positions_by_symbol"
+
+
 async def get_position(db: AsyncSession, account: Account, symbol: str) -> Position | None:
-    return await db.scalar(select(Position).where(Position.account_id == account.id, Position.symbol == symbol))
+    """Net position of `account` in `symbol`, memoized per session.
+
+    A tick looked the same row up 6-8 times (runner, OrderService, executor, position events). Re-selecting an
+    object already in the identity map returns that same object without refreshing its attributes, so serving
+    it from the session cache is equivalent, minus the round trip. Expired, deleted or detached objects (after a
+    rollback, an explicit expire or a delete) are reloaded from the database.
+    """
+    cache: dict = db.sync_session.info.setdefault(_POSITIONS_KEY, {})
+    key = (account.id, symbol)
+    pos = cache.get(key)
+    if pos is not None:
+        state = sa_inspect(pos)
+        if state.persistent and state.session_id == db.sync_session.hash_key and not state.expired_attributes:
+            return pos
+        cache.pop(key, None)
+    pos = await db.scalar(select(Position).where(Position.account_id == account.id, Position.symbol == symbol))
+    if pos is not None:
+        cache[key] = pos
+    return pos
 
 
 async def get_or_create_position(db: AsyncSession, account: Account, symbol: str, leverage: int = 1) -> Position:
@@ -85,6 +107,7 @@ async def get_or_create_position(db: AsyncSession, account: Account, symbol: str
         )
         db.add(pos)
         await db.flush()
+        db.sync_session.info.setdefault(_POSITIONS_KEY, {})[(account.id, symbol)] = pos
     return pos
 
 
