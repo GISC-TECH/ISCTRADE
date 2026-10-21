@@ -225,6 +225,129 @@ def supertrend(
     return line, direction
 
 
+def stoch_rsi(
+    values: Sequence[float], rsi_period: int = 14, stoch_period: int = 14, k_smooth: int = 3, d_smooth: int = 3
+) -> tuple[Series, Series]:
+    """Stochastic RSI -> (%K, %D) in 0-100: stochastic of the RSI, smoothed by SMAs."""
+    _check_period(stoch_period)
+    r = rsi(values, rsi_period)
+    raw: Series = [None] * len(values)
+    for i in range(len(values)):
+        window = r[i + 1 - stoch_period : i + 1] if i + 1 >= stoch_period else []
+        if len(window) < stoch_period or any(v is None for v in window):
+            continue
+        lo, hi = min(window), max(window)  # type: ignore[type-var]
+        raw[i] = 50.0 if hi == lo else 100 * (r[i] - lo) / (hi - lo)  # type: ignore[operator]
+    k = _clamp(_sma_skip_none(raw, k_smooth), 0.0, 100.0)  # clamp float drift of the rolling sums
+    d = _clamp(_sma_skip_none(k, d_smooth), 0.0, 100.0)
+    return k, d
+
+
+def _clamp(values: Series, lo: float, hi: float) -> Series:
+    return [None if v is None else min(max(v, lo), hi) for v in values]
+
+
+def _sma_skip_none(values: Series, period: int) -> Series:
+    """SMA over a series with leading None values (the result is None until `period` real values exist)."""
+    _check_period(period)
+    out: Series = [None] * len(values)
+    first = next((i for i, v in enumerate(values) if v is not None), None)
+    if first is None:
+        return out
+    tail = sma([v for v in values[first:]], period)  # type: ignore[misc]
+    out[first:] = tail
+    return out
+
+
+def heikin_ashi(
+    opens: Sequence[float], highs: Sequence[float], lows: Sequence[float], closes: Sequence[float]
+) -> tuple[list[float], list[float], list[float], list[float]]:
+    """Heikin-Ashi candles -> (open, high, low, close). Each value only depends on current/previous candles."""
+    ho: list[float] = []
+    hh: list[float] = []
+    hl: list[float] = []
+    hc: list[float] = []
+    for i in range(len(closes)):
+        c = (opens[i] + highs[i] + lows[i] + closes[i]) / 4
+        o = (opens[0] + closes[0]) / 2 if i == 0 else (ho[-1] + hc[-1]) / 2
+        ho.append(o)
+        hc.append(c)
+        hh.append(max(highs[i], o, c))
+        hl.append(min(lows[i], o, c))
+    return ho, hh, hl, hc
+
+
+def keltner(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    ema_period: int = 20,
+    atr_period: int = 10,
+    multiplier: float = 2.0,
+) -> tuple[Series, Series, Series]:
+    """Keltner channel -> (middle EMA, upper, lower) with bands at ± multiplier × ATR."""
+    mid = ema(closes, ema_period)
+    a = atr(highs, lows, closes, atr_period)
+    upper: Series = [None if m is None or x is None else m + multiplier * x for m, x in zip(mid, a)]
+    lower: Series = [None if m is None or x is None else m - multiplier * x for m, x in zip(mid, a)]
+    return mid, upper, lower
+
+
+def ichimoku(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    tenkan: int = 9,
+    kijun: int = 26,
+    senkou_b: int = 52,
+    displacement: int = 26,
+) -> dict[str, Series]:
+    """Ichimoku Kinko Hyo, aligned so that index i only uses data up to i (no lookahead).
+
+    ``span_a``/``span_b`` are the cloud values *plotted at* index i, i.e. computed `displacement` candles
+    earlier. The lagging line (chikou) is not returned: compare ``close[i]`` with ``close[i - displacement]``.
+    """
+
+    def mid(period: int) -> Series:
+        hi, lo = highest(highs, period), lowest(lows, period)
+        return [None if a is None or b is None else (a + b) / 2 for a, b in zip(hi, lo)]
+
+    t, k, b = mid(tenkan), mid(kijun), mid(senkou_b)
+    raw_a: Series = [None if x is None or y is None else (x + y) / 2 for x, y in zip(t, k)]
+    n = len(highs)
+    span_a: Series = [raw_a[i - displacement] if i >= displacement else None for i in range(n)]
+    span_b: Series = [b[i - displacement] if i >= displacement else None for i in range(n)]
+    return {"tenkan": t, "kijun": k, "span_a": span_a, "span_b": span_b}
+
+
+def session_vwap(
+    times_ms: Sequence[int],
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    volumes: Sequence[float],
+    session_ms: int = 86_400_000,
+) -> tuple[Series, Series]:
+    """VWAP anchored at each UTC session start (default: UTC day) -> (vwap, volume-weighted stdev)."""
+    vwap: Series = [None] * len(closes)
+    sd: Series = [None] * len(closes)
+    session = None
+    pv = vol = pv2 = 0.0
+    for i in range(len(closes)):
+        s = times_ms[i] // session_ms
+        if s != session:
+            session, pv, vol, pv2 = s, 0.0, 0.0, 0.0
+        tp = (highs[i] + lows[i] + closes[i]) / 3
+        v = max(volumes[i], 0.0)
+        pv += tp * v
+        pv2 += tp * tp * v
+        vol += v
+        if vol > 0:
+            m = pv / vol
+            vwap[i] = m
+            sd[i] = math.sqrt(max(pv2 / vol - m * m, 0.0))
+    return vwap, sd
+
+
 def crossed_above(fast: Series, slow: Series, i: int = -1) -> bool:
     """True if `fast` crossed above `slow` at index i (compared to i-1)."""
     a0, b0, a1, b1 = fast[i - 1], slow[i - 1], fast[i], slow[i]

@@ -30,6 +30,7 @@ from app.exchanges.base import ExchangeAdapter
 from app.exchanges.registry import public_adapter
 from app.models.scanner import MarketScan
 from app.strategy.base import Candle
+from app.strategy.classic import CLASSIC_STRATEGY_KEYS
 from app.strategy.indicators import adx, atr, rsi, sma
 from app.strategy.strategies import build_strategy, entry_signal
 
@@ -51,8 +52,9 @@ SIGNAL_STRATEGIES = (
     "donchian_breakout",
     "ema_adx_trend",
     "supertrend",
+    *CLASSIC_STRATEGY_KEYS,
 )
-KLINE_LIMIT = 150
+KLINE_LIMIT = 300  # enough history for strategies with 200-period trend filters (same request weight as 150)
 _memory_cache: dict[str, tuple[float, list]] = {}
 
 
