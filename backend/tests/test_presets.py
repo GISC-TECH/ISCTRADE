@@ -27,7 +27,9 @@ def test_preset_catalogue_is_valid() -> None:
         build_strategy(p["strategy_key"], p["params"])  # parameters validate
         BotOptions.model_validate(p["options"])
         assert p["execution_mode"] == "paper"
-        assert 1 <= p["leverage"] <= 2, "presets stay at low leverage"
+        assert 1 <= p["leverage"] <= 3, "presets stay at low leverage"
+        if p["leverage"] > 1:  # only intraday presets, whose tight stops need notional above equity
+            assert p["interval"] in ("1m", "3m", "5m", "15m", "30m")
         assert p["params"].get("risk_fraction", 1) <= 0.5, "presets use at most half of the per-trade risk"
         assert p["risk_level"] in ("conservador", "moderado", "agressivo")
         if p["experimental"]:

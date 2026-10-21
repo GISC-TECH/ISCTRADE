@@ -120,6 +120,7 @@ PRESETS: tuple[BotPreset, ...] = (
         ),
         strategy_key="vwap_reversion",
         interval="5m",
+        leverage=3,  # tight intraday stops: notional above equity, risk per trade unchanged
         params={"band_std": 2.0, "min_session_bars": 12, "atr_multiplier": 1.5, "risk_fraction": 0.25},
         options={"event_pause": PAUSE_WIDE, "news_filter": NEWS_FILTER},
         risk_level="agressivo",
@@ -204,6 +205,7 @@ PRESETS: tuple[BotPreset, ...] = (
         ),
         strategy_key="session_breakout",
         interval="15m",
+        leverage=3,  # tight intraday stops: notional above equity, risk per trade unchanged
         params={
             "session_start_hour": 13,
             "range_minutes": 60,
