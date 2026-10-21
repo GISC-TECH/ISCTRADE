@@ -14,7 +14,13 @@
 		-Server
 	}
 
-	@api path /api/* /health /docs /redoc /openapi.json
+	# Métricas são apenas para a rede interna (Prometheus): nunca expostas publicamente.
+	@internal path /metrics /metrics/*
+	handle @internal {
+		respond 404
+	}
+
+	@api path /api/* /health /health/* /docs /redoc /openapi.json
 	handle @api {
 		reverse_proxy backend:8000
 	}

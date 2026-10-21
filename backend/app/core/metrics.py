@@ -112,6 +112,28 @@ def register_db_collector() -> None:
         _db_collector_registered = True
 
 
+_api_registry: CollectorRegistry | None = None
+
+
+def api_registry() -> CollectorRegistry:
+    """Registry served by the API's /metrics.
+
+    Single process: the default REGISTRY. With PROMETHEUS_MULTIPROC_DIR (uvicorn --workers N), counters of
+    all workers are aggregated and the DB gauges are added once.
+    """
+    global _api_registry
+    if not os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        return REGISTRY
+    if _api_registry is None:
+        from prometheus_client import multiprocess
+
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        registry.register(DB_COLLECTOR)
+        _api_registry = registry
+    return _api_registry
+
+
 def start_metrics_server(port: int) -> bool:
     """Expose metrics of the current process (or of all Celery child processes in multiprocess mode)."""
     if port <= 0:

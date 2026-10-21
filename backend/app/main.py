@@ -14,7 +14,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.logging import configure_logging
-from app.core.metrics import DB_COLLECTOR, register_db_collector
+from app.core.metrics import DB_COLLECTOR, api_registry, register_db_collector
 from app.core.middleware import RequestContextMiddleware
 from app.core.redis import close_redis
 from app.services import health as health_service
@@ -89,4 +89,4 @@ async def metrics(request: Request) -> Response:
             DB_COLLECTOR.snapshot = await asyncio.wait_for(collect(db), timeout=5)
     except Exception:
         logger.warning("metrics snapshot failed", exc_info=True)
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    return Response(generate_latest(api_registry()), media_type=CONTENT_TYPE_LATEST)

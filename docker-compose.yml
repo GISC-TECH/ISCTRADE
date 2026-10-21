@@ -82,9 +82,14 @@ services:
 
   celery_worker:
     <<: *backend-common
-    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    # O diretório multiprocess do Prometheus é recriado a cada start (métricas de todos os processos filhos).
+    command: >-
+      sh -c "rm -rf /tmp/prometheus && mkdir -p /tmp/prometheus &&
+      exec celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2"
     environment:
       DB_USE_NULLPOOL: "true"
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+      METRICS_PORT: "9101"
     volumes:
       - ./backend:/app
     depends_on: *after-migrate
@@ -116,6 +121,8 @@ services:
   streams:
     <<: *backend-common
     command: python -m app.workers.streams
+    environment:
+      METRICS_PORT: "9102"
     volumes:
       - ./backend:/app
     depends_on: *after-migrate
@@ -155,6 +162,44 @@ services:
       - backend
     restart: unless-stopped
 
+  # --- Observabilidade opcional: docker compose --profile monitoring up -d ---
+  # Portas apenas em 127.0.0.1 (use um túnel SSH para acessar de fora). Veja docs/ALERTS.md e docs/ARCHITECTURE.md.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    volumes:
+      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - backend
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    profiles: ["monitoring"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - backend
+    restart: unless-stopped
+
 networks:
   frontend:
     name: btp_frontend
@@ -170,3 +215,7 @@ volumes:
     name: btp_caddy_data
   caddy_config:
     name: btp_caddy_config
+  prometheus_data:
+    name: btp_prometheus_data
+  grafana_data:
+    name: btp_grafana_data

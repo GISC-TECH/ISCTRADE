@@ -194,3 +194,19 @@ async def test_ws_down_and_recovered_hooks(threshold: float) -> None:
     assert s.events == ["down", "up"]
     assert _sample("btp_ws_reconnects_total", {"stream": "probe"}) == before + 1
     assert _sample("btp_ws_connected", {"stream": "probe"}) == 1
+
+
+def test_api_registry_multiprocess_mode(tmp_path, monkeypatch) -> None:
+    from prometheus_client import generate_latest
+
+    from app.core import metrics
+
+    assert metrics.api_registry() is REGISTRY
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
+    monkeypatch.setattr(metrics, "_api_registry", None)
+    metrics.DB_COLLECTOR.snapshot = {"global_kill": True}
+    try:
+        out = generate_latest(metrics.api_registry()).decode()
+    finally:
+        metrics.DB_COLLECTOR.snapshot = {}
+    assert "btp_global_kill_switch 1.0" in out

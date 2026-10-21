@@ -168,7 +168,7 @@ class GenericHttpNotifier(_HttpProvider):
 
 
 def render_body_template(template: str, *, to: str, text: str) -> Any:
-    """Substitute {to}, {to_digits}, {text} and {session}-free placeholders inside a JSON template.
+    """Substitute the {to}, {to_digits} and {text} placeholders inside a JSON body template.
 
     Values are JSON-escaped, so quotes/newlines in the message cannot break the document.
     """

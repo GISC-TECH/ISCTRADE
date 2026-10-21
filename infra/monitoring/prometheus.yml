@@ -1,0 +1,23 @@
+# Prometheus (perfil "monitoring" do docker compose). Todos os alvos estão na rede interna "backend".
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8000"]
+    # Se METRICS_TOKEN estiver definido no .env, descomente e grave o token em
+    # infra/monitoring/secrets/metrics_token (pasta ignorada pelo git) montada em /etc/prometheus/secrets.
+    # authorization:
+    #   type: Bearer
+    #   credentials_file: /etc/prometheus/secrets/metrics_token
+
+  - job_name: celery_worker
+    static_configs:
+      - targets: ["celery_worker:9101"]
+
+  - job_name: streams
+    static_configs:
+      - targets: ["streams:9102"]

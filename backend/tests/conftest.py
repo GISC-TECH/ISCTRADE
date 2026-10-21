@@ -19,6 +19,10 @@ os.environ["COOKIE_SECURE"] = "false"
 os.environ["REDIS_URL"] = "redis://127.0.0.1:1/0"  # unreachable on purpose -> in-memory fallbacks
 os.environ["LIVE_TRADING_ENABLED"] = "false"
 os.environ["CELERY_DISPATCH_ENABLED"] = "false"
+# Alerts: never inherit a real WhatsApp configuration from the developer's shell.
+for _var in [k for k in os.environ if k.startswith("WHATSAPP_")]:
+    del os.environ[_var]
+os.environ["WHATSAPP_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
