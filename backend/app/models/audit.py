@@ -21,6 +21,7 @@ class AuditLog(UUIDPrimaryKeyMixin, Base):
     level: Mapped[str] = mapped_column(String(10), default="info", nullable=False)
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     workspace_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
-    account_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"))
+    # indexed: account filter in the audit view and ON DELETE SET NULL when an account is removed
+    account_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), index=True)
     ip_address: Mapped[str | None] = mapped_column(String(64))
     data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)

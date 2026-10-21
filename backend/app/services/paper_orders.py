@@ -6,6 +6,7 @@ their LIMIT/STOP_MARKET/TAKE_PROFIT_MARKET orders live on Binance and are synchr
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -77,11 +78,12 @@ async def process_account(db: AsyncSession, account: Account, *, global_kill: bo
     symbols = {o.symbol for o in resting} | {p.symbol for p in positions}
     if not symbols:
         return
-    marks: dict[str, Decimal] = {}
-    for symbol in symbols:
-        price = await price_source(symbol, account.is_testnet)
-        if price is not None and price > 0:
-            marks[symbol] = Decimal(price)
+    ordered = sorted(symbols)
+    # Independent lookups (Redis cache, REST fallback on a miss): concurrently instead of one RTT per symbol.
+    found = await asyncio.gather(*(price_source(symbol, account.is_testnet) for symbol in ordered))
+    marks: dict[str, Decimal] = {
+        symbol: Decimal(price) for symbol, price in zip(ordered, found, strict=True) if price is not None and price > 0
+    }
     blocked = global_kill or account.status == AccountStatus.KILLED
 
     for order in resting:

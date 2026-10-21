@@ -15,10 +15,15 @@ from app.models.enums import OrderSide, OrderStatus, OrderType
 
 class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "orders"
-    __table_args__ = (Index("ix_orders_account_created", "account_id", "created_at"),)
+    # Composite indexes also cover the FK lookups (workspace_id / account_id prefix), see migration 0007.
+    __table_args__ = (
+        Index("ix_orders_account_created", "account_id", "created_at"),
+        Index("ix_orders_workspace_created", "workspace_id", "created_at"),  # order history (newest first)
+        Index("ix_orders_account_status", "account_id", "status"),  # open/resting orders (paper book, manual)
+    )
 
-    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
-    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"))
     bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bot_configs.id", ondelete="SET NULL"), index=True)
     symbol: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     side: Mapped[OrderSide] = mapped_column(str_enum(OrderSide, 4), nullable=False)
@@ -43,12 +48,17 @@ class Trade(UUIDPrimaryKeyMixin, Base):
     """An execution (fill)."""
 
     __tablename__ = "trades"
-    __table_args__ = (Index("ix_trades_account_executed", "account_id", "executed_at"),)
+    __table_args__ = (
+        Index("ix_trades_account_executed", "account_id", "executed_at"),
+        Index("ix_trades_workspace_executed", "workspace_id", "executed_at"),  # fill history
+        Index("ix_trades_account_exchange_trade", "account_id", "exchange_trade_id"),  # reconciler dedup per fill
+    )
 
-    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
-    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"))
     order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id", ondelete="SET NULL"), index=True)
-    bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bot_configs.id", ondelete="SET NULL"))
+    # indexed: ON DELETE SET NULL of a bot would otherwise scan the whole trades table
+    bot_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("bot_configs.id", ondelete="SET NULL"), index=True)
     symbol: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     side: Mapped[OrderSide] = mapped_column(str_enum(OrderSide, 4), nullable=False)
     price: Mapped[Decimal] = mapped_column(nullable=False)
@@ -82,10 +92,13 @@ class Position(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class EquitySnapshot(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "equity_snapshots"
-    __table_args__ = (Index("ix_equity_account_taken", "account_id", "taken_at"),)
+    __table_args__ = (
+        Index("ix_equity_account_taken", "account_id", "taken_at"),
+        Index("ix_equity_workspace_taken", "workspace_id", "taken_at"),  # equity curve per workspace
+    )
 
-    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
-    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"))
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"))
     wallet_balance: Mapped[Decimal] = mapped_column(nullable=False)
     unrealized_pnl: Mapped[Decimal] = mapped_column(default=Decimal("0"), nullable=False)
     equity: Mapped[Decimal] = mapped_column(nullable=False)
