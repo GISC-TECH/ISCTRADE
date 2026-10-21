@@ -1,6 +1,6 @@
 # Auditoria de segurança, dependências e execução — ISCTRADE
 
-Data: 2026-10-21 · Escopo: backend (FastAPI/Celery), frontend (Next.js 14), integrações externas,
+Data: 2026-10-21 (atualizado no mesmo dia: itens 15, 16, 20–23 corrigidos) · Escopo: backend (FastAPI/Celery), frontend (Next.js 16), integrações externas,
 correção da execução de ordens e confiabilidade. Fora do escopo deste documento: desempenho/latência
 (ver commits `perf(...)`) e o suporte a outras corretoras (ver `docs/EXCHANGES.md`).
 
@@ -16,8 +16,8 @@ Legenda de status: **Corrigido** (com testes, em `main`) · **Pendente** (docume
 | 3 | Alta | Kill switch `close_live_positions` abortava na primeira falha e só cancelava ordens de símbolos com posição; ordens abertas em outros símbolos continuavam vivas. Sem fechamento de posições, ordens de entrada não eram canceladas. | `services/kill_switch.py` | Corrigido |
 | 4 | Alta | Ordem com resultado desconhecido (timeout, 5xx, `-1007`) virava "rejeitada" mesmo podendo estar viva na corretora (risco de duplicidade/posição sem controle). Agora a ordem é consultada pelo `clientOrderId`. | `services/binance_client.py` | Corrigido |
 | 5 | Alta | IP do cliente lido de `X-Forwarded-For` sem validação: qualquer um contornava o rate limit de login forjando o cabeçalho. Agora só proxies em `TRUSTED_PROXIES` são considerados (hop mais à direita não confiável). | `core/rate_limiting.py`, `core/config.py` | Corrigido |
-| 6 | Alta | Login sem bloqueio por e-mail (força bruta distribuída por IPs) e com diferença de tempo que revelava se o e-mail existia. Adicionados limite por e-mail (`LOGIN_FAILURES_PER_EMAIL`, janela de 15 min) e hash bcrypt fictício. | `api/v1/auth.py` | Corrigido |
-| 7 | Alta | RBAC: qualquer membro do workspace podia afrouxar limites de risco da conta ou trocar testnet → mainnet. Agora exige admin do workspace. | `api/v1/accounts.py` | Corrigido |
+| 6 | Alta | Login sem bloqueio por e-mail (força bruta distribuída por IPs) e com diferença de tempo que revelava se o e-mail existia. Adicionados limite por e-mail (`LOGIN_FAILURES_PER_EMAIL`, janela de 15 min) e hash bcrypt fictício. | `api/v1/endpoints/auth.py` | Corrigido |
+| 7 | Alta | RBAC: qualquer membro do workspace podia afrouxar limites de risco da conta ou trocar testnet → mainnet. Agora exige admin do workspace. | `api/v1/endpoints/accounts.py` | Corrigido |
 | 8 | Alta | Dependências com CVEs conhecidas (backend) | `backend/requirements*.txt` / `pyproject` | Corrigido (pip-audit limpo) |
 | 9 | Média | XSS por link `javascript:` em notícias (URL vinda de feeds/RSS renderizada em `href`). Validação no backend (`safe_url`) e no frontend (`safeHref`). | `news/sources.py`, `frontend/lib/utils.ts`, `frontend/app/dashboard/news/page.tsx` | Corrigido |
 | 10 | Média | Ausência de CSP, Permissions-Policy e COOP no proxy. | `Caddyfile` | Corrigido |
@@ -25,21 +25,21 @@ Legenda de status: **Corrigido** (com testes, em `main`) · **Pendente** (docume
 | 12 | Média | `-1021` (relógio dessincronizado) não era tratado; `sync_time()` nunca era chamado. Agora ressincroniza e repete uma vez. GETs repetem em erro de rede/5xx (escritas nunca são repetidas às cegas). | `services/binance_client.py` | Corrigido |
 | 13 | Média | Nomes de streams convertidos para minúsculas (Binance diferencia maiúsculas) e sockets "meio abertos" sem reconexão: o painel ficava sem dados. | `workers/streams.py`, `services/binance_ws.py` | Corrigido |
 | 14 | Média | Tokens de autenticação/refresh/bearer podiam aparecer em logs. | `core/redaction.py` | Corrigido |
-| 15 | Média | Next.js 14: CVEs remanescentes só corrigidos em 15.5.24+/16 (upgrade de versão maior). Mitigação atual: não usamos `next/image` com domínios remotos nem Server Actions; o app fica atrás do Caddy. | `frontend/package.json` | Pendente |
-| 16 | Média | Refresh tokens não são de uso único (sem detecção de reutilização / rotação com revogação da família). | `api/v1/auth.py`, `core/security.py` | Pendente |
+| 15 | Média | Next.js 14 com CVEs só corrigidos em 15.5.24+/16. Atualizado para **Next.js 16.4.2 + React 19** (ESLint 9 flat config, `middleware.ts` → `proxy.ts`); `npm audit --omit=dev` sem achados no Next/React. | `frontend/package.json`, `frontend/eslint.config.mjs`, `frontend/proxy.ts` | Corrigido |
+| 16 | Média | Refresh tokens não eram de uso único. Agora cada token é registrado (`refresh_tokens`, migração 0008) por família de login; é trocado uma única vez e a reapresentação de um token já usado (fora de uma janela de 10 s para abas concorrentes, `REFRESH_REUSE_GRACE_SECONDS`) **revoga a família inteira** e gera `auth.refresh_reuse_detected` (critical). Logout revoga a família no servidor. | `api/v1/endpoints/auth.py`, `models/refresh_token.py` | Corrigido |
 | 17 | Baixa | LIMIT usava `MARKET_LOT_SIZE` (máx. e passo) em vez de `LOT_SIZE`. | `services/symbol_filters.py`, `services/execution.py` | Corrigido |
 | 18 | Baixa | Limite de WebSocket por usuário (4429) baixo e sem mensagem na UI → "Reconectando…" infinito. Padrão 20 e mensagem clara. | `core/config.py`, `frontend/lib/realtime.ts` | Corrigido |
 | 19 | Baixa | Testes carregavam o `.env` local (resultados dependiam da máquina). `BTP_ENV_FILE` isola os testes. | `core/config.py`, `tests/conftest.py` | Corrigido |
-| 20 | Baixa | Feeds RSS sem limite de tamanho de resposta; SSRF possível apenas via URLs configuradas por variável de ambiente (não por usuário). | `news/sources.py` | Pendente |
-| 21 | Baixa | `get_realized_pnl` lê só as primeiras 1000 linhas de `income` (sem paginação). | `services/binance_client.py` | Pendente |
-| 22 | Baixa | Hedge mode (posições LONG/SHORT simultâneas) não suportado; a conta deve estar em one-way mode. | execução | Pendente (documentado) |
-| 23 | Baixa | bcrypt roda no event loop (bloqueia por ~200 ms por login). | `core/security.py` | Pendente (escopo de desempenho) |
-| 24 | Info | Dependências transitivas do Tailwind com avisos do `npm audit` — apenas em tempo de build. | `frontend/package-lock.json` | Aceito |
+| 20 | Baixa | Buscas externas (RSS, CryptoPanic, X, calendário, LLM) sem limite de tamanho nem prazo total (timeouts do httpx são por leitura: servidor "gota a gota" nunca expirava; gzip bomb descompactava sem limite). `fetch_limited`: corpo decodificado ≤ `NEWS_MAX_RESPONSE_BYTES` (5 MB) / `LLM_MAX_RESPONSE_BYTES` (1 MB) e prazo `NEWS_FETCH_DEADLINE_SECONDS` (30 s). SSRF continua possível apenas via URLs definidas por variável de ambiente (não por usuário). | `core/http_limits.py`, `news/*.py` | Corrigido |
+| 21 | Baixa | `get_realized_pnl` lia só as primeiras 1000 linhas de `income`. Agora pagina (até 100 páginas) recomeçando no timestamp da última linha e deduplicando por `tranId`. | `services/binance_client.py` | Corrigido |
+| 22 | Baixa | Hedge mode (posições LONG/SHORT simultâneas) não é suportado (ordens sem `positionSide`, posição líquida por símbolo). Decisão: **detectar e recusar** — ordens manuais live retornam 409 com instrução para mudar para one-way mode, bots falham ao iniciar com a mesma mensagem, e `POST /accounts/{id}/verify` retorna `hedge_mode=true`/`ok=false`. | `services/position_mode.py`, `services/manual_trading.py`, `services/jobs.py`, `api/v1/endpoints/accounts.py` | Corrigido (recusado com erro claro) |
+| 23 | Baixa | bcrypt rodava no event loop (~200 ms bloqueados por login/cadastro/troca de senha, congelando WebSockets e outras requisições). Agora em thread (`anyio.to_thread`). | `core/security.py`, `api/v1/endpoints/auth.py` | Corrigido |
+| 24 | Info | Dependências transitivas do Tailwind 3 (`braces`, `micromatch`, `postcss-selector-parser`) com avisos do `npm audit` — apenas em tempo de build, sem correção upstream de `braces`; resolver exige migrar para Tailwind 4. | `frontend/package-lock.json` | Aceito |
 
 ## 2. Dependências e código suspeito
 
 - `pip-audit` (backend) sem vulnerabilidades após as atualizações; FastAPI fixado em 0.158 (com ajuste de teste).
-- `npm audit`: restam apenas os itens 15 e 24 acima.
+- `npm audit`: resta apenas o item 24 acima (build-time, Tailwind 3); Next.js 16.4.2 e React 19 sem achados.
 - `package-lock.json` resolve **somente** de `registry.npmjs.org`; nenhum pacote de origem git/URL.
 - Único `postinstall` relevante: `unrs-resolver` (dependência legítima de `eslint-config-next`, baixa binário nativo do próprio pacote npm).
 - Nenhum código ofuscado, `eval` de conteúdo remoto, beacon/telemetria oculta ou envio de chaves para terceiros foi encontrado.
@@ -66,12 +66,10 @@ Legenda de status: **Corrigido** (com testes, em `main`) · **Pendente** (docume
 
 ## 4. Recomendações pendentes (por prioridade)
 
-1. Migrar o frontend para Next.js 15.5.24+ (ou 16) e reexecutar `npm audit`.
-2. Refresh token de uso único com detecção de reutilização (revogar a família ao detectar reuso).
-3. Limitar o tamanho das respostas RSS (ex.: 2 MB) e restringir esquemas/hosts das URLs de feed.
-4. Paginar `income` em `get_realized_pnl`.
-5. Mover bcrypt para thread (`anyio.to_thread`) e revisar a decisão sobre o provedor WAGO.
-6. Validar no cadastro da conta que a Binance está em one-way mode (`GET /fapi/v1/positionSide/dual`).
+1. Migrar Tailwind 3 → 4 para eliminar os avisos de build do item 24.
+2. Revisar o uso do provedor WAGO para WhatsApp (terceiro recebe o texto dos alertas) — preferir Meta Cloud API ou gateway próprio.
+3. Se houver demanda, suportar hedge mode de fato (`positionSide` em ordens, posições por lado no reconciliador).
+4. Opcional: restringir hosts das URLs de feed (lista permitida) para eliminar o SSRF residual via configuração.
 
 ## 5. Desempenho (latência e throughput)
 
