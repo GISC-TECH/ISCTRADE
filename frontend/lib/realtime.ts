@@ -5,7 +5,15 @@
 // - Subscriptions (symbols/klines) are reference-counted across components and re-sent after reconnecting.
 import { API_URL, tryRefresh } from "./api";
 
-export type ConnectionStatus = "idle" | "connecting" | "open" | "reconnecting" | "unauthorized" | "disabled" | "error";
+export type ConnectionStatus =
+  | "idle"
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "too_many"
+  | "unauthorized"
+  | "disabled"
+  | "error";
 export type Net = "main" | "test";
 
 export interface Ticker {
@@ -236,13 +244,18 @@ export class RealtimeClient {
       this.set({ status: "disabled" });
       return;
     }
-    this.scheduleReconnect(code === CLOSE_TOO_MANY ? MAX_BACKOFF_MS : undefined);
+    if (code === CLOSE_TOO_MANY) {
+      // Connection limit per user reached (other tabs): say so instead of a silent "Reconectando…".
+      this.scheduleReconnect(MAX_BACKOFF_MS, "too_many");
+      return;
+    }
+    this.scheduleReconnect();
   }
 
-  private scheduleReconnect(delay?: number) {
+  private scheduleReconnect(delay?: number, status: ConnectionStatus = "reconnecting") {
     if (this.stopped) return;
     const attempts = this.snapshot.attempts + 1;
-    this.set({ status: "reconnecting", attempts });
+    this.set({ status, attempts });
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = setTimeout(() => this.connect(), delay ?? backoffDelay(attempts - 1));
   }

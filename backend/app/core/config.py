@@ -1,5 +1,6 @@
 """Application settings loaded from environment variables (pydantic-settings)."""
 
+import os
 from functools import lru_cache
 from typing import Annotated
 
@@ -8,7 +9,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # BTP_ENV_FILE overrides the dotenv path; an empty value disables it (the test suite does this so a
+    # developer's local .env never leaks into tests).
+    model_config = SettingsConfigDict(
+        env_file=os.environ.get("BTP_ENV_FILE", ".env") or None, env_file_encoding="utf-8", extra="ignore"
+    )
 
     # General
     PROJECT_NAME: str = "Binance Trading Platform"
@@ -117,7 +122,7 @@ class Settings(BaseSettings):
     # Real-time panel (WebSocket fed by Redis pub/sub)
     REALTIME_ENABLED: bool = True
     REALTIME_HEARTBEAT_SECONDS: int = 15
-    REALTIME_MAX_CONNECTIONS_PER_USER: int = 5
+    REALTIME_MAX_CONNECTIONS_PER_USER: int = 20  # one per open browser tab
     REALTIME_PRICE_THROTTLE_MS: int = 250  # <= 4 price/kline updates per second per symbol and connection
     REALTIME_KLINE_TTL_SECONDS: int = 120  # kline subscriptions requested by clients expire without renewal
     REALTIME_MARKET_FEED: bool = True  # streams worker publishes tickers/mark/klines

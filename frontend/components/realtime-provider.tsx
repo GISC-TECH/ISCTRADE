@@ -115,6 +115,7 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   connecting: "Conectando…",
   open: "Tempo real",
   reconnecting: "Reconectando…",
+  too_many: "Muitas abas abertas",
   unauthorized: "Sessão expirada",
   disabled: "Tempo real desativado",
   error: "Sem acesso",
@@ -126,7 +127,7 @@ export function ConnectionIndicator({ className }: { className?: string }) {
   const color =
     status === "open"
       ? "bg-green-500"
-      : status === "connecting" || status === "reconnecting"
+      : status === "connecting" || status === "reconnecting" || status === "too_many"
         ? "bg-yellow-500 animate-pulse"
         : "bg-red-500";
   const title =
@@ -134,6 +135,8 @@ export function ConnectionIndicator({ className }: { className?: string }) {
       ? `Conectado (${broker === "redis" ? "Redis" : "processo local"})`
       : status === "reconnecting"
         ? `Tentativa ${attempts}; clique para reconectar agora`
+        : status === "too_many"
+          ? "Limite de conexões em tempo real por usuário atingido (cada aba aberta usa uma). Feche outras abas; nova tentativa em 30 s ou clique para tentar agora."
         : STATUS_LABEL[status];
   return (
     <button

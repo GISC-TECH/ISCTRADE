@@ -125,7 +125,7 @@ Regras:
 |---|---|---|
 | `REALTIME_ENABLED` | `true` | Liga o WebSocket e a publicação de eventos |
 | `REALTIME_HEARTBEAT_SECONDS` | `15` | Intervalo do heartbeat |
-| `REALTIME_MAX_CONNECTIONS_PER_USER` | `5` | Conexões simultâneas por usuário |
+| `REALTIME_MAX_CONNECTIONS_PER_USER` | `20` | Conexões simultâneas por usuário (cada aba aberta do painel usa uma) |
 | `REALTIME_PRICE_THROTTLE_MS` | `250` | Intervalo mínimo entre atualizações de preço/candle por símbolo |
 | `REALTIME_KLINE_TTL_SECONDS` | `120` | Expiração das assinaturas de candles sem renovação |
 | `REALTIME_MARKET_FEED` | `true` | O worker `streams` publica tickers/mark/candles públicos |

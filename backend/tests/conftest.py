@@ -11,6 +11,8 @@ import secrets
 import tempfile
 
 _TMP = tempfile.mkdtemp(prefix="btp-tests-")
+# Never read the developer's local .env (backend/.env): tests must only see the variables set here.
+os.environ["BTP_ENV_FILE"] = ""
 os.environ["MASTER_ENCRYPTION_KEY"] = base64.b64encode(os.urandom(32)).decode()
 os.environ["JWT_SECRET"] = secrets.token_urlsafe(48)
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TMP}/test.db"
