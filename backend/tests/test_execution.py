@@ -134,7 +134,8 @@ async def test_live_executor_with_mocked_binance(db, monkeypatch) -> None:
             return httpx.Response(
                 200, json={"orderId": 1, "status": "FILLED", "executedQty": q["quantity"], "avgPrice": "100.5"}
             )
-        return httpx.Response(200, json={"orderId": 2, "status": "NEW"})
+        assert request.url.path == "/fapi/v1/algoOrder" and q["algoType"] == "CONDITIONAL"
+        return httpx.Response(200, json={"algoId": 2, "clientAlgoId": q["clientAlgoId"], "algoStatus": "NEW"})
 
     client = BinanceFuturesClient("k", "s", testnet=True, transport=httpx.MockTransport(handler))
     _, ws = await make_user_workspace(db)
@@ -147,7 +148,9 @@ async def test_live_executor_with_mocked_binance(db, monkeypatch) -> None:
     assert res.ok and res.order.exchange_order_id == "1"
     assert [dict(c.url.params)["type"] for c in calls] == ["MARKET", "STOP_MARKET"]
     stop_params = dict(calls[1].url.params)
-    assert stop_params["closePosition"] == "true" and stop_params["stopPrice"] == "95"
+    # since 2025-12-09 conditional orders must use the Algo Order API (triggerPrice, no quantity/reduceOnly)
+    assert stop_params["closePosition"] == "true" and stop_params["triggerPrice"] == "95"
+    assert "quantity" not in stop_params and "reduceOnly" not in stop_params
     assert all("testnet" in str(c.url) for c in calls)
 
 

@@ -81,7 +81,7 @@ async def test_soft_limit_fails_fast_for_market_data_but_never_blocks_orders(mon
         assert exc.value.status_code == 429 and "weight guard" in exc.value.message
         await c.place_order("BTCUSDT", "SELL", "MARKET", quantity="1", reduce_only=True)
         await c.cancel_all_orders("BTCUSDT")
-    assert calls == ["/fapi/v1/ping", "/fapi/v1/order", "/fapi/v1/allOpenOrders"]
+    assert calls == ["/fapi/v1/ping", "/fapi/v1/order", "/fapi/v1/allOpenOrders", "/fapi/v1/algoOpenOrders"]
 
 
 async def test_soft_limit_waits_for_next_window_when_short(monkeypatch) -> None:

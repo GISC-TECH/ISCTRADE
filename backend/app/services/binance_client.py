@@ -6,6 +6,7 @@ Signed endpoints use HMAC-SHA256 over the urlencoded query string.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import time
@@ -16,7 +17,14 @@ from urllib.parse import urlencode
 import httpx
 
 from app.core.config import settings
-from app.exchanges.base import ExchangeAdapter, ExchangeAPIError, ExchangeCapabilities, StreamHandler
+from app.exchanges.base import (
+    ERR_CANCEL_REJECTED,
+    ERR_ORDER_NOT_FOUND,
+    ExchangeAdapter,
+    ExchangeAPIError,
+    ExchangeCapabilities,
+    StreamHandler,
+)
 from app.services.binance_http import DEFAULT_TIMEOUT, rate_limits, shared_client
 from app.services.symbol_filters import SymbolFilters
 
@@ -38,6 +46,43 @@ def _fmt(value: Decimal | float | str | None) -> str | None:
     if isinstance(value, Decimal):
         return format(value.normalize(), "f")
     return str(value)
+
+
+ERR_TIMESTAMP = -1021  # timestamp outside recvWindow (clock skew)
+ERR_UNKNOWN_STATUS = -1007  # "Timeout waiting for response from backend server. Send status unknown"
+CONDITIONAL_TYPES = frozenset({"STOP", "STOP_MARKET", "TAKE_PROFIT", "TAKE_PROFIT_MARKET", "TRAILING_STOP_MARKET"})
+GET_RETRIES = 2
+GET_RETRY_BACKOFF = 0.25
+RECOVERY_DELAYS = (0.5, 1.0, 2.0)
+# algoStatus -> order status used by the rest of the system (TRIGGERED/FINISHED = sent to the book as MARKET)
+_ALGO_STATUS = {
+    "NEW": "NEW", "TRIGGERING": "NEW", "TRIGGERED": "FILLED", "FINISHED": "FILLED",
+    "CANCELED": "CANCELED", "EXPIRED": "EXPIRED", "REJECTED": "REJECTED",
+}  # fmt: skip
+
+
+def normalize_algo_order(algo: dict[str, Any]) -> dict[str, Any]:
+    """Algo (conditional) order -> the order-shaped dict the executor/reconciler expect."""
+    return {
+        **algo,
+        "orderId": algo.get("algoId"),
+        "clientOrderId": algo.get("clientAlgoId"),
+        "type": algo.get("orderType") or algo.get("type"),
+        "stopPrice": algo.get("triggerPrice"),
+        "status": _ALGO_STATUS.get(str(algo.get("algoStatus") or "NEW").upper(), "NEW"),
+        "executedQty": algo.get("executedQty", "0"),
+        "avgPrice": algo.get("actualPrice") or algo.get("avgPrice") or "0",
+        "isAlgo": True,
+    }
+
+
+def _status_unknown(exc: Exception) -> bool:
+    """True when the request may or may not have reached the matching engine."""
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    if isinstance(exc, BinanceAPIError):
+        return exc.code == ERR_UNKNOWN_STATUS or exc.status_code >= 500
+    return False
 
 
 class BinanceFuturesClient(ExchangeAdapter):
@@ -109,6 +154,31 @@ class BinanceFuturesClient(ExchangeAdapter):
         if signed or api_key_only:
             if not self._api_key:
                 raise BinanceAPIError(401, None, "API key required")
+        attempt = 0
+        resynced = False
+        while True:
+            try:
+                return await self._send(method, path, dict(params), signed)
+            except BinanceAPIError as exc:
+                # -1021: local clock outside recvWindow -> resync with the server time and retry once
+                if signed and exc.code == ERR_TIMESTAMP and not resynced:
+                    resynced = True
+                    await self.sync_time()
+                    continue
+                if method == "GET" and exc.status_code >= 500 and attempt < GET_RETRIES:
+                    attempt += 1
+                    await asyncio.sleep(GET_RETRY_BACKOFF * attempt)
+                    continue
+                raise
+            except httpx.TransportError:
+                # reads are idempotent: retry transient network errors; writes never retry blindly
+                if method == "GET" and attempt < GET_RETRIES:
+                    attempt += 1
+                    await asyncio.sleep(GET_RETRY_BACKOFF * attempt)
+                    continue
+                raise
+
+    async def _send(self, method: str, path: str, params: dict[str, Any], signed: bool) -> Any:
         await rate_limits.before_request(self.base_url, method, path)  # before signing: waits keep recvWindow valid
         if signed:
             params["timestamp"] = int(time.time() * 1000) + self.time_offset_ms
@@ -292,20 +362,85 @@ class BinanceFuturesClient(ExchangeAdapter):
         client_order_id: str | None = None,
         **extra: Any,
     ) -> dict:
+        """Place an order. Conditional types go to the Algo Order API (mandatory since 2025-12-09).
+
+        If the outcome is unknown (timeout, 5xx, -1007) the order is looked up by its client id before
+        giving up, so the caller never retries (duplicates) an order that actually reached the exchange.
+        """
+        if order_type.upper() in CONDITIONAL_TYPES:
+            send = self._place_algo_order(
+                symbol, side, order_type, quantity=quantity, price=price, trigger_price=stop_price,
+                time_in_force=time_in_force, reduce_only=reduce_only, close_position=close_position,
+                client_algo_id=client_order_id, **extra,
+            )  # fmt: skip
+        else:
+            params: dict[str, Any] = {
+                "symbol": symbol,
+                "side": side,
+                "type": order_type,
+                "quantity": _fmt(quantity),
+                "price": _fmt(price),
+                "stopPrice": _fmt(stop_price),
+                "timeInForce": time_in_force,
+                "reduceOnly": ("true" if reduce_only else "false") if reduce_only is not None else None,
+                "closePosition": "true" if close_position else None,
+                "newClientOrderId": client_order_id,
+                **extra,
+            }
+            send = self._request("POST", "/fapi/v1/order", params, signed=True)
+        try:
+            return await send
+        except (httpx.TimeoutException, httpx.TransportError, BinanceAPIError) as exc:
+            if not client_order_id or not _status_unknown(exc):
+                raise
+            found = await self._recover_order(symbol, client_order_id)
+            if found is None:
+                raise
+            return found
+
+    async def _place_algo_order(
+        self,
+        symbol: str,
+        side: str,
+        order_type: str,
+        *,
+        quantity: Decimal | str | None,
+        price: Decimal | str | None,
+        trigger_price: Decimal | str | None,
+        time_in_force: str | None,
+        reduce_only: bool | None,
+        close_position: bool | None,
+        client_algo_id: str | None,
+        **extra: Any,
+    ) -> dict:
         params: dict[str, Any] = {
+            "algoType": "CONDITIONAL",
             "symbol": symbol,
             "side": side,
             "type": order_type,
-            "quantity": _fmt(quantity),
+            "quantity": None if close_position else _fmt(quantity),
             "price": _fmt(price),
-            "stopPrice": _fmt(stop_price),
+            "triggerPrice": _fmt(trigger_price),
             "timeInForce": time_in_force,
-            "reduceOnly": ("true" if reduce_only else "false") if reduce_only is not None else None,
+            # reduceOnly cannot be combined with closePosition=true
+            "reduceOnly": None if close_position or reduce_only is None else ("true" if reduce_only else "false"),
             "closePosition": "true" if close_position else None,
-            "newClientOrderId": client_order_id,
+            "clientAlgoId": client_algo_id,
             **extra,
         }
-        return await self._request("POST", "/fapi/v1/order", params, signed=True)
+        return normalize_algo_order(await self._request("POST", "/fapi/v1/algoOrder", params, signed=True))
+
+    async def _recover_order(self, symbol: str, client_order_id: str) -> dict | None:
+        for delay in RECOVERY_DELAYS:
+            await asyncio.sleep(delay)
+            try:
+                return await self.get_order(symbol, client_order_id=client_order_id)
+            except BinanceAPIError as exc:
+                if exc.code != ERR_ORDER_NOT_FOUND and exc.status_code < 500:
+                    return None
+            except httpx.TransportError:
+                continue
+        return None
 
     async def test_order(self, symbol: str, side: str, order_type: str, **kwargs: Any) -> dict:
         """Validates an order without sending it to the matching engine (/fapi/v1/order/test)."""
@@ -315,26 +450,56 @@ class BinanceFuturesClient(ExchangeAdapter):
     async def cancel_order(self, symbol: str, order_id: int | None = None, client_order_id: str | None = None) -> dict:
         if order_id is None and client_order_id is None:
             raise ValueError("order_id or client_order_id is required")
-        return await self._request(
-            "DELETE",
-            "/fapi/v1/order",
-            {"symbol": symbol, "orderId": order_id, "origClientOrderId": client_order_id},
-            signed=True,
-        )
+        try:
+            return await self._request(
+                "DELETE",
+                "/fapi/v1/order",
+                {"symbol": symbol, "orderId": order_id, "origClientOrderId": client_order_id},
+                signed=True,
+            )
+        except BinanceAPIError as exc:
+            if exc.code not in (ERR_CANCEL_REJECTED, ERR_ORDER_NOT_FOUND):
+                raise
+            # conditional (STOP/TP) orders live in the Algo service; ids there are algoId/clientAlgoId
+            params = {"clientAlgoId": client_order_id} if client_order_id else {"algoId": order_id}
+            try:
+                return normalize_algo_order(await self._request("DELETE", "/fapi/v1/algoOrder", params, signed=True))
+            except BinanceAPIError:
+                raise exc from None
 
     async def cancel_all_orders(self, symbol: str) -> dict:
-        return await self._request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": symbol}, signed=True)
+        resp = await self._request("DELETE", "/fapi/v1/allOpenOrders", {"symbol": symbol}, signed=True)
+        try:  # protective STOP/TP orders are algo orders and are not covered by allOpenOrders
+            await self._request("DELETE", "/fapi/v1/algoOpenOrders", {"symbol": symbol}, signed=True)
+        except BinanceAPIError as exc:
+            if exc.status_code >= 500 or exc.code in (ERR_TIMESTAMP,):
+                raise
+        return resp
 
     async def get_order(self, symbol: str, order_id: int | None = None, client_order_id: str | None = None) -> dict:
-        return await self._request(
-            "GET",
-            "/fapi/v1/order",
-            {"symbol": symbol, "orderId": order_id, "origClientOrderId": client_order_id},
-            signed=True,
-        )
+        try:
+            return await self._request(
+                "GET",
+                "/fapi/v1/order",
+                {"symbol": symbol, "orderId": order_id, "origClientOrderId": client_order_id},
+                signed=True,
+            )
+        except BinanceAPIError as exc:
+            if exc.code != ERR_ORDER_NOT_FOUND or not client_order_id:
+                raise
+            try:
+                algo = await self._request("GET", "/fapi/v1/algoOrder", {"clientAlgoId": client_order_id}, signed=True)
+            except BinanceAPIError:
+                raise exc from None
+            if not algo or not algo.get("algoId"):
+                raise exc from None
+            return normalize_algo_order(algo)
 
     async def get_open_orders(self, symbol: str | None = None) -> list[dict]:
-        return await self._request("GET", "/fapi/v1/openOrders", {"symbol": symbol}, signed=True)
+        orders = await self._request("GET", "/fapi/v1/openOrders", {"symbol": symbol}, signed=True)
+        algo = await self._request("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol}, signed=True)
+        rows = algo.get("orders", algo) if isinstance(algo, dict) else algo
+        return [*orders, *(normalize_algo_order(a) for a in rows or [])]
 
     # ------------------------------------------------------------------ #
     # User data stream (API key header only, no signature)

@@ -28,7 +28,12 @@ DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=3.0, pool=5.0)
 POOL_LIMITS = httpx.Limits(max_connections=64, max_keepalive_connections=32, keepalive_expiry=60.0)
 
 # Endpoints that must never be delayed by the soft weight guard (entries/exits, user stream keepalive).
-PRIORITY_PATHS = frozenset({"/fapi/v1/order", "/fapi/v1/allOpenOrders", "/fapi/v1/batchOrders", "/fapi/v1/listenKey"})
+PRIORITY_PATHS = frozenset(
+    {
+        "/fapi/v1/order", "/fapi/v1/allOpenOrders", "/fapi/v1/batchOrders", "/fapi/v1/listenKey",
+        "/fapi/v1/algoOrder", "/fapi/v1/algoOpenOrders",  # protective STOP/TP (Algo Order API)
+    }
+)  # fmt: skip
 
 _pools: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, httpx.AsyncClient]] = weakref.WeakKeyDictionary()
 
