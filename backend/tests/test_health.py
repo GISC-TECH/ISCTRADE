@@ -11,7 +11,7 @@ def test_health() -> None:
 
 
 def test_api_v1_routes_registered() -> None:
-    paths = {route.path for route in app.routes}
+    paths = set(app.openapi()["paths"])  # stable across FastAPI router internals
     assert "/api/v1/auth/login" in paths
     assert "/api/v1/accounts/" in paths
     assert "/api/v1/accounts/{account_id}/dashboard" in paths
