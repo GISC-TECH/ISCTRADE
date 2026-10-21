@@ -19,7 +19,8 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     hash_password,
-    verify_password,
+    hash_password_async,
+    verify_password_async,
     verify_token,
 )
 from app.models.base import as_utc, utcnow
@@ -109,7 +110,7 @@ async def register(data: UserCreate, request: Request, db: AsyncSession = Depend
     user = User(
         email=email,
         full_name=data.full_name,
-        hashed_password=hash_password(data.password),
+        hashed_password=await hash_password_async(data.password),
         role=Role.ADMIN if is_first else Role.TRADER,
     )
     db.add(user)
@@ -145,7 +146,7 @@ async def login(
         )
     user = await db.scalar(select(User).where(User.email == email))
     # Always run bcrypt (dummy hash for unknown e-mails) so response time does not reveal registered accounts.
-    password_ok = verify_password(data.password, user.hashed_password if user else _DUMMY_HASH)
+    password_ok = await verify_password_async(data.password, user.hashed_password if user else _DUMMY_HASH)
     if not user or not password_ok or not user.is_active:
         await rate_hit(failures_key, LOGIN_FAILURE_WINDOW)
         await log_event(
@@ -261,9 +262,9 @@ async def change_password(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    if not verify_password(data.current_password, user.hashed_password):
+    if not await verify_password_async(data.current_password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Senha atual incorreta")
-    user.hashed_password = hash_password(data.new_password)
+    user.hashed_password = await hash_password_async(data.new_password)
     user.token_version += 1  # revoke other sessions
     await log_event(db, "auth.password_changed", user_id=user.id)
     await db.commit()

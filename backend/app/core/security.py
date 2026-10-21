@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
+import anyio
 import bcrypt
 import jwt
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -32,6 +33,15 @@ def verify_password(password: str, hashed: str) -> bool:
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
     except ValueError:
         return False
+
+
+async def hash_password_async(password: str) -> str:
+    """bcrypt in a worker thread: ~0.2 s of CPU per call must not stall the event loop (WS, other requests)."""
+    return await anyio.to_thread.run_sync(hash_password, password)
+
+
+async def verify_password_async(password: str, hashed: str) -> bool:
+    return await anyio.to_thread.run_sync(verify_password, password, hashed)
 
 
 # --------------------------------------------------------------------------- #
