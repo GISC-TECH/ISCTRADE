@@ -72,3 +72,113 @@ Legenda de status: **Corrigido** (com testes, em `main`) · **Pendente** (docume
 4. Paginar `income` em `get_realized_pnl`.
 5. Mover bcrypt para thread (`anyio.to_thread`) e revisar a decisão sobre o provedor WAGO.
 6. Validar no cadastro da conta que a Binance está em one-way mode (`GET /fapi/v1/positionSide/dual`).
+
+## 5. Desempenho (latência e throughput)
+
+Auditoria de velocidade de ponta a ponta: sinal → RiskManager → ordem, banco, Celery, streams/WebSocket e
+frontend. Todas as medições foram feitas na mesma máquina (Postgres 17 e Redis locais, Python 3.12), com a
+Binance simulada por `httpx.MockTransport` com RTT de 25 ms (nenhuma conta real é tocada). "Antes" é o commit
+`b997207` (benchmark adicionado, nenhuma otimização); "depois" é o `main` atual.
+
+Como reproduzir (em `backend/`, com um banco descartável):
+
+```bash
+BENCH_DATABASE_URL=postgresql+asyncpg://u:p@localhost:5432/scratch python -m benchmarks.perf_bench
+BENCH_DATABASE_URL=postgresql+asyncpg://u:p@localhost:5432/scratch2 python -m benchmarks.index_bench
+python -m benchmarks.perf_bench http   # só GET /fapi/v1/ping público
+```
+
+### 5.1 Resultados (medianas)
+
+| Cenário | Antes | Depois | Ganho |
+|---|---:|---:|---|
+| Ordem live (entrada + SL + TP, RTT 25 ms) | 86,0 ms | 59,7 ms | −31 % (SL e TP em paralelo) |
+| Tick de bot paper com 1 execução | 11,3 ms / 19 queries | 7,9 ms / 13 queries | −30 %, −6 queries |
+| Overhead por task Celery (`run_async`: SELECT 1 + GET Redis) | 25,9 ms | 0,78 ms | 33× |
+| Fan-out WS: 50 sessões × mensagem de 600 tickers (45 KB) | 20,5 ms | 0,40 ms | 51× (MarketHub + orjson) |
+| Publicação de evento após commit (`_publish_sync`) | 0,22 ms | 0,04 ms | 5× |
+| Chamada HTTP Binance (ping real, cliente novo × pool keep-alive) | 69,5 ms | 11,3 ms | handshake TLS eliminado |
+| `GET /accounts/{id}/dashboard` (paper) | 5,2 ms | 5,4 ms | igual (ganho é no modo live: chamadas em paralelo, sem `positionRisk` extra) |
+| Endpoints de histórico/contas | 3,5–5,5 ms | 3,3–5,6 ms | igual (dados pequenos; ver índices abaixo) |
+
+Índices (migração `0007`, 400 mil ordens/trades e 200 mil linhas de auditoria, `EXPLAIN ANALYZE`):
+
+| Consulta | 0006 | 0007 |
+|---|---:|---:|
+| Histórico de ordens (workspace, 50 mais recentes) | 11,66 ms | 0,023 ms |
+| Histórico de trades (workspace, 50 mais recentes) | 10,29 ms | 0,034 ms |
+| Ordens LIMIT abertas do paper (conta) | 4,82 ms | 0,40 ms |
+| Deduplicação de fills do reconciliador (conta, trade id) | 4,33 ms | 0,008 ms |
+| Exclusão de bot: `trades.bot_id` → NULL | 17,2 ms | 2,05 ms |
+| Contagem do histórico de ordens | 9,7 ms | 10,0 ms (seq scan agregado; ver limitações) |
+| Exclusão de conta: `audit_logs.account_id` → NULL | 57,8 ms | 60,4 ms (dominado pela escrita das linhas) |
+
+Frontend (`npm run build`, First Load JS):
+
+| Rota | Antes | Depois |
+|---|---:|---:|
+| `/dashboard` | 214 kB | 114 kB |
+| `/dashboard/strategies` | 219 kB | 119 kB |
+| `/dashboard/live` | 184 kB | 128 kB |
+
+Re-renderizações (React 18 + jsdom, 400 mensagens `tickers`/`mark` de 8 símbolos, barra de cotações + página
+ao vivo): o corpo da página ao vivo (gráfico, tabelas de ordens/eventos, bots) passou de 400 renderizações para
+0; commits da barra de cotações de 400 para 183; tempo de render total de 113 ms para 45 ms. O EMA do gráfico
+passou de recalcular e reenviar 950 pontos por kline (27 µs de cálculo + `setData` com redesenho completo)
+para 2 pontos via `series.update` (2 µs).
+
+### 5.2 Gargalos encontrados e correções
+
+1. **Cliente HTTP novo por instância do `BinanceClient`** (handshake TCP+TLS a cada tick/ordem). Agora há um
+   `httpx.AsyncClient` compartilhado por event loop (`app/services/binance_http.py`), com keep-alive
+   (64 conexões, 32 ociosas, 60 s), timeouts explícitos (10 s; conexão 3 s; pool 5 s) e fechamento no shutdown.
+2. **Sem controle de peso da Binance.** `X-MBX-USED-WEIGHT-1M` é lido em toda resposta e exportado na métrica
+   `btp_binance_used_weight_1m`; acima de `BINANCE_WEIGHT_SOFT_PCT` (90 %) de `BINANCE_WEIGHT_LIMIT_1M` (2400)
+   chamadas não críticas esperam o próximo minuto (máx. `BINANCE_WEIGHT_MAX_WAIT_SECONDS`); 429/418 abrem uma
+   janela de bloqueio pelo `Retry-After`, e novas chamadas falham na hora em vez de agravar o ban. Ordens,
+   cancelamentos e listenKey nunca são atrasadas pelo limite suave.
+3. **`exchangeInfo` baixado repetidamente** (peso 1 a cada uso, ~1 MB). Cache de 15 min compartilhado entre
+   scanner e filtros de símbolo.
+4. **Celery com `asyncio.run` + `NullPool` + conexão Redis nova por task** (~26 ms de overhead fixo). Agora
+   cada processo do worker mantém um event loop persistente e um engine com pool pequeno
+   (`CELERY_DB_POOL_SIZE=2`), encerrados em `worker_process_shutdown` (`app/tasks/runtime.py`).
+5. **Fila única com concorrência 2** compartilhada entre ticks de bots e tarefas lentas (notícias/LLM,
+   scanner, calendário), além de resultados gravados no Redis sem uso. Agora há as filas `trading`
+   (bots, paper, contas, risco) e `default`, com exchanges próprias, `task_ignore_result=True`, `expires` nos
+   ticks (ticks atrasados não se acumulam) e limites de tempo em `bots.tick`. O `docker-compose` ganhou o
+   serviço `celery_worker_trading` (`-Q trading --concurrency=4`), com healthcheck, alvo no Prometheus e
+   inclusão no `scripts/deploy.sh`.
+6. **SL e TP enviados em série** após a entrada: agora em paralelo (`asyncio.gather`), mantendo a regra de
+   nunca deixar a entrada sem stop.
+7. **Dashboard live com chamadas em série** e `positionRisk` redundante: `account` e `income` em paralelo;
+   `positionRisk` só quando a conta não traz posições.
+8. **Mesmas posições consultadas várias vezes por tick** (N+1): cache por sessão no `get_position`
+   (19 → 13 queries por tick com execução).
+9. **Índices faltando** para histórico por workspace, ordens abertas por conta, deduplicação de fills e FKs
+   (`trades.bot_id`, `audit_logs.account_id`, `alerts.account_id`): migração `0007`, criada com
+   `CREATE INDEX CONCURRENTLY IF NOT EXISTS` no Postgres (sem bloquear escrita), removendo índices simples
+   redundantes.
+10. **Cada sessão WebSocket decodificava cada mensagem de mercado (45 KB)** e o Redis copiava a mensagem para
+    cada sessão. Agora há uma assinatura por processo (`MarketHub`): decodifica uma vez, indexa por símbolo e
+    entrega a cada sessão apenas os símbolos observados. `orjson` no encode/decode e nos logs JSON.
+11. **Uma thread e uma conexão Redis nova por commit** para publicar eventos (podia inclusive inverter a ordem
+    dos eventos). Agora há uma única thread publicadora com fila limitada (10 mil), pipeline e conexão em pool.
+12. **Streams gravavam um `SET` no Redis por mensagem de mark price**: agora em buffer e gravados em um
+    pipeline a cada 0,5 s (e no shutdown).
+13. **Preços do paper buscados em série**: agora em paralelo.
+14. **Frontend: cada mensagem de ticker/mark (até ~8/s) re-renderizava a página ao vivo inteira** (gráfico,
+    tabelas, painel de ordem) e refazia os 200 marcadores do gráfico. Agora há seletores por símbolo
+    (`useTicker`, `useMark`, `useLivePrice`, `useLivePrices`, `useRealtimeSelector`); só a cotação, a tabela de
+    posições, o card da conta e o painel de ordem re-renderizam, e só quando o preço deles muda. Linhas e
+    marcadores do gráfico são memoizados; EMA incremental; `recharts` e `lightweight-charts` em chunks lazy.
+
+### 5.3 Limitações e próximos passos
+
+- Sem HTTP/2 (exigiria a dependência `h2`); o keep-alive já elimina a maior parte do custo.
+- A janela de ban 429/418 e o peso usado são por processo (não compartilhados via Redis); cada worker
+  aprende o peso pela próxima resposta.
+- A contagem total do histórico continua fazendo varredura agregada (~10 ms com 400 mil linhas); se crescer,
+  trocar por contagem estimada ou paginação por cursor.
+- A exclusão de conta é dominada pela atualização das linhas de auditoria (`SET NULL`), não pela busca.
+- Ao subir o novo serviço `celery_worker_trading`, faça deploy do worker e do beat juntos: tasks de trading
+  enviadas para a fila `trading` sem esse worker ficam paradas.
