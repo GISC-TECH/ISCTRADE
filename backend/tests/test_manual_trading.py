@@ -187,6 +187,7 @@ async def test_kill_switches_block_openings_but_allow_closing(client, db, alerts
     await db.commit()
     r = await client.post("/api/v1/trading/orders", json=_order(acc_id), headers=h)
     assert r.status_code == 409 and "global" in r.json()["detail"]
+    assert (await client.get("/api/v1/trading/status", headers=h)).json() == {"global_kill_switch": True}
     lev = {"account_id": acc_id, "symbol": "BTCUSDT", "leverage": 2, "confirm": True}
     assert (await client.post("/api/v1/trading/leverage", json=lev, headers=h)).status_code == 409
     assert await db.scalar(select(AuditLog).where(AuditLog.event == "manual.order_blocked"))

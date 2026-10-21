@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import WorkspaceContext, require_workspace_role
+from app.api.deps import WorkspaceContext, get_workspace_context, require_workspace_role
 from app.api.v1.endpoints.accounts import get_account_in_workspace
 from app.core.database import get_db
 from app.core.security import Role
@@ -21,7 +21,7 @@ from app.schemas.trading import (
     ManualOrderResult,
 )
 from app.services import manual_trading
-from app.services.execution import ExecutionResult
+from app.services.execution import ExecutionResult, is_global_kill_switch_on
 from app.services.manual_trading import ManualOrderRequest, ManualTradingError
 
 router = APIRouter()
@@ -55,6 +55,14 @@ async def _run(db: AsyncSession, coro):
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     await db.commit()
     return out
+
+
+@router.get("/status")
+async def trading_status(
+    _: WorkspaceContext = Depends(get_workspace_context), db: AsyncSession = Depends(get_db)
+) -> dict[str, bool]:
+    """Estado do kill switch global (visível a qualquer membro, para o painel bloquear novas entradas)."""
+    return {"global_kill_switch": await is_global_kill_switch_on(db)}
 
 
 @router.post("/orders", response_model=ManualOrderResult)
