@@ -6,6 +6,8 @@ Execution model (documented assumptions):
 - Signals are evaluated on candle close; market orders fill at the close +/- slippage.
 - Protective stops are checked against each candle's high/low BEFORE the strategy runs and fill at the
   stop price +/- slippage (gaps beyond the stop fill at the candle open if worse).
+- Optional take profits (``OrderIntent.take_profit``) are checked after the stop (if a candle touches both, the
+  stop wins: pessimistic) and fill at the take-profit price -/+ slippage (no favourable gap fills).
 - Fees are charged on notional for every fill (taker rate by default). Funding is not modelled.
 - One-way net position; leverage only affects the margin check.
 """
@@ -142,6 +144,7 @@ class BacktestEngine:
         self.qty = ZERO
         self.entry = ZERO
         self.stop: Decimal | None = None
+        self.tp: Decimal | None = None
         self.peak = self.cfg.initial_balance
         self.day: int | None = None
         self.day_start_equity = self.cfg.initial_balance
@@ -172,6 +175,7 @@ class BacktestEngine:
         self.qty, self.entry = outcome.quantity, outcome.entry_price
         if self.qty == 0:
             self.stop = None
+            self.tp = None
         self.trades.append(BacktestTrade(time, side.value, qty, price, fee, outcome.realized_pnl, tag))
         return outcome.realized_pnl
 
@@ -219,8 +223,12 @@ class BacktestEngine:
             return False
         px = price * (1 + self.slip) if intent.side == OrderSide.BUY else price * (1 - self.slip)
         self._fill(candle.close_time, intent.side, qty, px, intent.tag)
-        if not intent.reduce_only and intent.stop_loss is not None and self.qty != 0:
-            self.stop = intent.stop_loss
+        if not intent.reduce_only and self.qty != 0:
+            if intent.stop_loss is not None:
+                self.stop = intent.stop_loss
+            tp = intent.take_profit
+            valid_tp = tp is not None and tp > 0 and ((tp > px) if self.qty > 0 else (tp < px))
+            self.tp = tp if valid_tp else None
         return True
 
     # ------------------------------------------------------------------ #
@@ -243,6 +251,16 @@ class BacktestEngine:
                 px = ref * (1 - self.slip) if side == OrderSide.SELL else ref * (1 + self.slip)
                 self._fill(candle.close_time, side, abs(self.qty), px, "stop_loss")
                 self.strategy.on_stop_out(self._ctx(candles, i, lookback, close, state))
+            # 1b. take profit (after the stop: a candle touching both counts as a stop)
+            elif self.qty and self.tp is not None:
+                long = self.qty > 0
+                hi, lo = Decimal(str(candle.high)), Decimal(str(candle.low))
+                if (long and hi >= self.tp) or (not long and lo <= self.tp):
+                    tp = Decimal(self.tp)
+                    side = OrderSide.SELL if long else OrderSide.BUY
+                    px = tp * (1 - self.slip) if long else tp * (1 + self.slip)
+                    self._fill(candle.close_time, side, abs(self.qty), px, "take_profit")
+                    self.strategy.on_stop_out(self._ctx(candles, i, lookback, close, state))
 
             # 2. risk baselines
             equity = self.equity(close)

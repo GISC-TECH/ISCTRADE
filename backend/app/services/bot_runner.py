@@ -295,6 +295,7 @@ class BotRunner:
             res = await self.orders.submit(
                 self.db, account, intent, symbol=symbol, ref_price=price, leverage=bot.leverage,
                 risk_state=risk_state, bot=bot, filters=filters,
+                take_profit=None if intent.reduce_only else intent.take_profit,
             )  # fmt: skip
             strategy.on_result(intent, res.ok, ctx)
             if res.ok:

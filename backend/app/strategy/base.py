@@ -40,6 +40,7 @@ class OrderIntent:
     side: OrderSide
     quantity: Decimal | None = None  # None -> sized from the per-trade risk limit
     stop_loss: Decimal | None = None
+    take_profit: Decimal | None = None  # optional; entries only (TAKE_PROFIT_MARKET live, simulated in paper/backtest)
     reduce_only: bool = False
     tag: str = ""
     risk_fraction: Decimal = Decimal("1")  # fraction of the max risk used when auto-sizing
