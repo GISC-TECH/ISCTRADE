@@ -9,7 +9,13 @@ from sqlalchemy.pool import NullPool
 from app.core.config import settings
 
 
-def make_engine(url: str | None = None, *, nullpool: bool | None = None) -> AsyncEngine:
+def make_engine(
+    url: str | None = None,
+    *,
+    nullpool: bool | None = None,
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
+) -> AsyncEngine:
     url = url or settings.DATABASE_URL
     use_nullpool = settings.DB_USE_NULLPOOL if nullpool is None else nullpool
     kwargs: dict = {"echo": settings.DB_ECHO}
@@ -17,7 +23,12 @@ def make_engine(url: str | None = None, *, nullpool: bool | None = None) -> Asyn
         # NullPool: connections are never shared between event loops (Celery tasks, tests).
         kwargs["poolclass"] = NullPool
     else:
-        kwargs.update(pool_pre_ping=True, pool_size=settings.DB_POOL_SIZE, max_overflow=settings.DB_MAX_OVERFLOW)
+        kwargs.update(
+            pool_pre_ping=True,
+            pool_size=settings.DB_POOL_SIZE if pool_size is None else pool_size,
+            max_overflow=settings.DB_MAX_OVERFLOW if max_overflow is None else max_overflow,
+            pool_recycle=1800,  # drop connections idle-killed by PgBouncer/firewalls before they error out
+        )
     return create_async_engine(url, **kwargs)
 
 

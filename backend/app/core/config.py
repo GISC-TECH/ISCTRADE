@@ -71,6 +71,8 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://redis:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
     CELERY_DISPATCH_ENABLED: bool = True  # API -> worker task dispatch (disabled in tests)
+    # DB connections kept per Celery worker process (persistent event loop, app.tasks.runtime). 0 = NullPool.
+    CELERY_DB_POOL_SIZE: int = 2
 
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = 60

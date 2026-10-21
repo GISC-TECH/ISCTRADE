@@ -69,7 +69,7 @@ backup() {
 
 wait_healthy() {
   local deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
-  local services=(backend frontend celery_worker)
+  local services=(backend frontend celery_worker celery_worker_trading)
   log "Aguardando health checks (${HEALTH_TIMEOUT}s): ${services[*]}"
   while :; do
     local pending=()
@@ -128,7 +128,7 @@ deploy() {
 
   if ! wait_healthy; then
     $COMPOSE ps
-    $COMPOSE logs --tail=80 backend celery_worker frontend || true
+    $COMPOSE logs --tail=80 backend celery_worker celery_worker_trading frontend || true
     die "deploy não ficou saudável. Para voltar: ./scripts/deploy.sh rollback (restaure o backup se houve migração)."
   fi
   smoke_test

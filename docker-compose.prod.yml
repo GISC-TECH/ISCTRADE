@@ -31,6 +31,14 @@ services:
       PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
       METRICS_PORT: "9101"
 
+  celery_worker_trading:
+    volumes: !reset []
+    environment:
+      <<: *prod-env
+      DB_USE_NULLPOOL: "true"
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+      METRICS_PORT: "9101"
+
   celery_beat:
     volumes: !reset []
     environment:

@@ -1,5 +1,6 @@
 from celery import Celery
 from celery.schedules import crontab
+from kombu import Exchange, Queue
 
 from app.core.config import settings
 
@@ -15,7 +16,31 @@ celery_app = Celery(
         "app.tasks.trading_tasks",
     ],
 )
+# Queues: trading-critical work (bot ticks, paper order book, reconciliation, equity/risk) never waits behind
+# slow I/O-bound jobs (news + LLM, scanner, calendar, WhatsApp delivery). Run one worker per queue
+# (docker-compose: celery_worker_trading -Q trading, celery_worker -Q default). A worker started without -Q
+# consumes both queues, so a single-worker setup keeps working.
+TRADING_QUEUE = "trading"
+DEFAULT_QUEUE = "default"
+TASK_ROUTES = {
+    "bots.*": {"queue": TRADING_QUEUE},
+    "paper.*": {"queue": TRADING_QUEUE},
+    "accounts.*": {"queue": TRADING_QUEUE},
+    "risk.*": {"queue": TRADING_QUEUE},
+    "scanner.*": {"queue": DEFAULT_QUEUE},
+    "news.*": {"queue": DEFAULT_QUEUE},
+    "calendar.*": {"queue": DEFAULT_QUEUE},
+    "alerts.*": {"queue": DEFAULT_QUEUE},
+}
+
 celery_app.conf.update(
+    # explicit exchange/routing key per queue: with shared bindings a message would be copied to both queues
+    task_queues=tuple(Queue(q, Exchange(q, type="direct"), routing_key=q) for q in (TRADING_QUEUE, DEFAULT_QUEUE)),
+    task_default_queue=DEFAULT_QUEUE,
+    task_routes=TASK_ROUTES,
+    # Nobody reads task results: skip one Redis write (and key expiry) per task. Tasks that need a result
+    # can still opt in with ignore_result=False.
+    task_ignore_result=True,
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",

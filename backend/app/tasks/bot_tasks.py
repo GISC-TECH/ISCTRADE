@@ -1,44 +1,30 @@
-"""Celery tasks. Each task runs its async job in a fresh event loop with a NullPool engine."""
+"""Celery tasks: thin sync wrappers that run the async jobs of app.services.jobs."""
 
 from __future__ import annotations
 
-import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from app.core.database import make_engine
-from app.core.redis import close_redis
+from app.core.config import settings
 from app.services import jobs
 from app.tasks.celery_app import celery_app
+from app.tasks.runtime import run_async
 
-T = TypeVar("T")
-
-_engine = make_engine(nullpool=True)
-_sessions = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
-
-
-def run_async(fn: Callable[[async_sessionmaker[AsyncSession]], Awaitable[T]]) -> T:
-    async def runner() -> T:
-        try:
-            return await fn(_sessions)
-        finally:
-            await close_redis()
-
-    return asyncio.run(runner())
+__all__ = ["run_async"]
 
 
 @celery_app.task(name="bots.tick_all")
 def tick_all() -> dict[str, Any]:
     ids = run_async(jobs.due_bot_ids)
+    # A tick that could not start within one period is superseded by the next one: drop it instead of
+    # letting a backlog of stale ticks delay fresh ones (the per-bot Redis lock would skip them anyway).
+    expires = max(float(settings.BOT_TICK_SECONDS), 5.0)
     for bot_id in ids:
-        tick_bot.delay(str(bot_id))
+        tick_bot.apply_async((str(bot_id),), expires=expires)
     return {"dispatched": len(ids)}
 
 
-@celery_app.task(name="bots.tick")
+@celery_app.task(name="bots.tick", soft_time_limit=90, time_limit=120)
 def tick_bot(bot_id: str) -> dict[str, Any]:
     return run_async(lambda s: jobs.tick_bot(s, uuid.UUID(bot_id)))
 

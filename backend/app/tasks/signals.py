@@ -92,6 +92,9 @@ def _worker_init(**_: Any) -> None:
 
 @worker_process_shutdown.connect
 def _worker_process_shutdown(pid: int | None = None, **_: Any) -> None:
+    from app.tasks.runtime import shutdown_runtime
+
+    shutdown_runtime()  # close the DB pool, Redis and Binance HTTP connections of this process
     if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
         from prometheus_client import multiprocess
 
