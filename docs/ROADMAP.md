@@ -24,6 +24,9 @@
   Supertrend (trailing ATR) — [STRATEGIES.md](STRATEGIES.md)
 - [x] Scanner de mercado USDT-M (liquidez, tendência, ATR%, momentum, volume, funding, sinais) e seleção
   automática de símbolos nos bots com limite de posições simultâneas
+- [x] Notícias (RSS, CryptoPanic, X) com sentimento por LLM/léxico como **filtro** de entradas, calendário
+  econômico com pausa por evento e alertas — [NEWS.md](NEWS.md)
+- [ ] Arquivo histórico de notícias para backtests com filtro em períodos antigos
 - [x] Integrar RiskManager no backtest
 - [x] Relatórios: retorno, drawdown máximo, Sharpe, win rate, profit factor, buy & hold
 - [ ] Testes walk-forward / out-of-sample

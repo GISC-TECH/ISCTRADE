@@ -43,6 +43,9 @@ evento (auditoria / WebSocket / Celery / beat)
 | `reconciler_mismatch` — posições corrigidas pelo reconciliador | ⚠️ aviso | ligado | `reconcile.changes` |
 | `task_failed` — falha em tarefa Celery | ⚠️ aviso | ligado | sinal `task_failure` |
 | `daily_summary` — resumo diário de PnL | 📊 info | ligado | beat `alerts.daily_summary` (`ALERT_DAILY_SUMMARY_HOUR_UTC`, minuto 5) |
+| `news_high_impact` — notícia de alto impacto em símbolo operado | ⚠️ aviso | ligado | `news.ingest` ([NEWS.md](NEWS.md)); uma vez por notícia, só para workspaces expostos ao símbolo |
+| `economic_event` — evento econômico de alto impacto em breve | ℹ️ info | ligado | beat `calendar.alerts` (`ECON_ALERT_LEAD_MINUTES` antes) |
+| `bot_event_pause` — bot pausou novas entradas por evento | ℹ️ info | ligado | `bot.event_pause` |
 
 Exemplo de mensagem:
 

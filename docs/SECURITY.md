@@ -31,6 +31,17 @@
 - **Kill switch global** (super-admin, painel Admin): bloqueia novas ordens de abertura em todas as contas.
 - Os testes automatizados **sempre** simulam a Binance (transportes HTTP/WebSocket falsos); nenhuma ordem real é enviada pela suíte.
 
+## Notícias, LLM e fontes externas
+- Tokens opcionais (`LLM_API_KEY`, `CRYPTOPANIC_API_TOKEN`, `X_BEARER_TOKEN`) ficam só no `.env`; a API de status
+  informa apenas se cada fonte está ligada. Erros de fontes são registrados só com o tipo da exceção (a URL da
+  CryptoPanic contém o token).
+- Ao LLM vai **somente** o texto público da notícia; nunca dados de conta, saldos, posições, chaves ou usuários. A
+  saída do LLM é tratada como dado não confiável: JSON validado, valores limitados, texto truncado e o prompt
+  orienta a ignorar instruções embutidas na notícia. Notícias e o sentimento só podem bloquear/reduzir entradas —
+  nunca criam ordens —, e toda ordem continua passando pelo `RiskManager`.
+- Feeds RSS são lidos com `defusedxml` (sem expansão de entidades/XXE). Links de notícias abrem com
+  `rel="noopener noreferrer nofollow"`; o texto é exibido como texto puro (sem HTML).
+
 ## Autenticação e autorização
 - Senhas com **bcrypt**. Troca de senha e "sair de todos os dispositivos" incrementam `token_version`, revogando todos os JWTs emitidos.
 - JWT de acesso (curta duração) e refresh (longa duração) em cookies **httpOnly**, `SameSite=Lax`, `Secure` em produção. O cookie de refresh tem `path=/api/v1/auth`. O cookie `btp_session` é apenas um marcador sem segredo, usado pelo middleware do Next.js para redirecionar ao login.
