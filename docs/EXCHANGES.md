@@ -29,7 +29,7 @@ backtest, streams, trading manual) depende da interface **`ExchangeAdapter`**
 | Interface | `app/exchanges/base.py` | `ExchangeAdapter` (ABC, async): dados de mercado REST, klines (`get_klines`, `get_klines_range`), filtros/precisão (`get_symbol_filters` → `SymbolFilters`), tickers 24h, mark price/funding (`get_premium_index_all`, `get_funding_rate_history`), conta/saldo/posições, alavancagem e modo de margem, ordens com `client_order_id` (`place_order`, `cancel_order`, `get_order`, `get_open_orders`, `cancel_all_orders`), PnL realizado, user-data stream (`user_data_stream`) e streams de mercado (`market_stream`). Também define `ExchangeAPIError`, `UnsupportedFeatureError`, `ExchangeCapabilities` e os **códigos de erro canônicos** (`ERR_ORDER_NOT_FOUND = -2013`, `ERR_CANCEL_REJECTED = -2011`, `ERR_NO_CHANGE = -4046`, `ERR_INVALID_SYMBOL = -1121`). |
 | Registro/fábrica | `app/exchanges/registry.py` | `adapter_for_account(account)` (assinado, credenciais da conta), `public_adapter(testnet)` (dados públicos), `create_adapter(id, ...)`, `available_exchanges()`, `register_exchange(cls)`. Adaptadores `experimental=True` são recusados se `EXPERIMENTAL_EXCHANGES_ENABLED=false` (padrão). |
 | Binance USDT-M | `app/services/binance_client.py` (+ `binance_ws.py`, `binance_http.py`), alias em `app/exchanges/binance_usdm.py` | Implementação de produção (`exchange_id = "binance_usdm"`). Comportamento idêntico ao anterior à refatoração. |
-| Bybit V5 linear | `app/exchanges/bybit.py` | **Esqueleto EXPERIMENTAL** (`bybit_linear`), desligado por padrão: REST completo traduzido para o formato canônico; **sem WebSockets** ainda. Só para desenvolvimento em Testnet. |
+| Bybit V5 linear | `app/exchanges/bybit.py`, `app/exchanges/bybit_ws.py` | **EXPERIMENTAL** (`bybit_linear`), desligado por padrão: REST completo traduzido para o formato canônico; WebSockets público e privado traduzidos para eventos canônicos, ligados só com `BYBIT_WS_ENABLED=true`. Só para desenvolvimento em Testnet. |
 | Conta | `accounts.exchange` (migração `0006`) | Id do adaptador por conta (padrão `binance_usdm`). Validado na criação; `GET /api/v1/accounts/exchanges` lista os habilitados. |
 
 **Formato canônico.** Para manter a refatoração incremental, os payloads trocados entre adaptadores e serviços
@@ -120,8 +120,22 @@ Legenda: ✅ produção · 🧪 experimental no repositório.
 - **Contras:** conta unificada (UTA) muda margem isolada/cruzada **por conta** (não por símbolo);
   `order/create` responde só com ack (status chega por WS ou consulta); erros "não modificado" (110043/110026)
   precisam ser tratados como idempotentes (já feito).
-- **Falta:** WS público (`tickers`, `kline`) e privado (`order`, `execution`, `position`, `wallet`) traduzidos
-  para `ORDER_TRADE_UPDATE`/`ACCOUNT_UPDATE`; funding no PnL realizado; hedge mode.
+- **WebSockets (experimental, `BYBIT_WS_ENABLED=false` por padrão)** — `app/exchanges/bybit_ws.py`, reaproveita o
+  laço de reconexão do `BinanceStream` (backoff, idade máxima, *idle timeout*, alerta de desconexão, métricas) e
+  envia o `{"op":"ping"}` exigido a cada 20 s:
+  - **público** (`/v5/public/linear`): `<sym>@markPrice[@1s]` e `<sym>@miniTicker` → tópico `tickers.<SYM>`
+    (snapshot + *deltas* mesclados por símbolo) → `markPriceUpdate` / `24hrMiniTicker`; `<sym>@kline_<i>` →
+    `kline.<i>.<SYM>` → evento `kline`. Assinaturas em lotes de 10. Streams de todo o mercado (`!miniTicker@arr`,
+    `!markPrice@arr`) não existem na Bybit e são recusados (`UnsupportedFeatureError`);
+  - **privado** (`/v5/private`): `auth` (HMAC-SHA256 de `"GET/realtime" + expires`; falha → reconecta com backoff)
+    e assinatura de `order.linear`, `execution.linear`, `position.linear`, `wallet` → `ORDER_TRADE_UPDATE`
+    (ordem: `x` = status; execução `execType=Trade`: `x=TRADE`, `t`, `l`, `L`, `n`, `rp`=`execPnl`, `z`) e
+    `ACCOUNT_UPDATE` (`P` com `pa` assinado e `ps=BOTH` só para `positionIdx=0`; `B` com saldo USDT). Execuções de
+    funding/ADL são ignoradas no stream (ficam para a reconciliação REST). Nenhuma ordem é enviada pelo socket.
+  - Testado apenas com socket simulado (`tests/test_bybit_ws.py`); **não** foi validado contra a Testnet real.
+    Com a flag desligada o `StreamSupervisor` pula a conta (REST a cada `RECONCILE_SECONDS`).
+- **Falta:** validação na Testnet real, feed de preços por exchange (o feed compartilhado ainda é o da exchange
+  padrão), funding no PnL realizado; hedge mode.
 
 ### OKX (V5)
 - Excelente API e Demo trading. Cuidado: `sz` em **contratos** (`ctVal`), `instId` `BTC-USDT-SWAP`, ordens

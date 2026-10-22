@@ -126,7 +126,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | F-12 | Alertas de posição ao vivo (além de aberta/fechada) | P1 | Parcial | M | ver G-06 |
 | F-13 | Paper com preenchimento parcial | P2 | ✅ Resolvido (opcional, ver G-10a) | M | ver G-10a |
 | F-14 | Estratégia de funding (contrarian) | P3 | ✅ Resolvido — `funding_contrarian` (funding extremo + z-score + confirmação EMA, stop ATR); `ctx.funding` alimentado no backtest/walk-forward (sem lookahead) e nos bots (histórico público da exchange) | M | `strategy/funding.py`; `STRATEGIES.md` §Funding contrarian |
-| F-15 | WebSocket da Bybit | P3 | Faltando (adaptador só REST, experimental) | G | `exchanges/bybit.py:616` |
+| F-15 | WebSocket da Bybit | P3 | ✅ Resolvido (experimental, `BYBIT_WS_ENABLED=false` por padrão) — streams público (`tickers`/`kline`) e privado (`order`/`execution`/`position`/`wallet`, auth HMAC, ping 20 s) traduzidos para eventos canônicos; testes só com socket simulado, sem validação na Testnet real | G | `exchanges/bybit_ws.py`; `EXCHANGES.md` §Bybit |
 | F-16 | Escolha de exchange no formulário de contas | P3 | ✅ Resolvido — seletor de corretora no formulário (lista de `GET /accounts/exchanges`; experimentais só aparecem se habilitadas, com notas; testnet desabilitado quando não suportado) | P | `frontend/app/dashboard/accounts/page.tsx` |
 | F-17 | Modo spot | P3 | Faltando (só USDT-M) | G | nenhuma referência a spot |
 | F-18 | Critérios objetivos de aumento de capital / aumentos graduais | P1 | Faltando (operacional + suporte no app) | M | `ROADMAP` Fase 5 |

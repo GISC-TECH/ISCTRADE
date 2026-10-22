@@ -3,8 +3,9 @@
 Status:
 * REST market data, symbol filters, funding, account, positions and orders are implemented and translated
   into the canonical (Binance-shaped) payloads documented in ``app.exchanges.base``;
-* WebSocket streams (public and private) are **not** implemented yet (``UnsupportedFeatureError``), so the
-  real-time reconciler cannot run for Bybit accounts — use it for development on the **testnet** only;
+* WebSocket streams (public and private, ``app.exchanges.bybit_ws``) are implemented but **off by default**:
+  with ``BYBIT_WS_ENABLED=false`` both methods raise ``UnsupportedFeatureError`` and Bybit accounts rely on
+  the periodic REST reconciliation — use it for development on the **testnet** only;
 * only one-way mode (``positionIdx=0``) on a Unified Trading Account (``accountType=UNIFIED``) is supported.
 
 The registry refuses to build this adapter unless ``EXPERIMENTAL_EXCHANGES_ENABLED=true``.
@@ -181,7 +182,10 @@ class BybitLinearAdapter(ExchangeAdapter):
     capabilities = ExchangeCapabilities(
         perpetual_futures=True, testnet=True, hedge_mode=False, user_data_stream=False, market_streams=False,
         test_order=False, quote_assets=("USDT",),
-        notes=("skeleton: REST only, no WebSocket streams yet", "one-way mode, Unified Trading Account only"),
+        notes=(
+            "experimental: WebSocket streams only with BYBIT_WS_ENABLED=true (otherwise REST polling)",
+            "one-way mode, Unified Trading Account only",
+        ),
     )  # fmt: skip
 
     def __init__(
@@ -613,13 +617,21 @@ class BybitLinearAdapter(ExchangeAdapter):
         return [order_to_canonical(o) for o in data.get("list", [])]
 
     # ------------------------------------------------------------------ #
-    # Streams: not implemented in the skeleton
+    # Streams (experimental, BYBIT_WS_ENABLED): canonical events, see app.exchanges.bybit_ws
     def user_data_stream(self, handler: StreamHandler, **kw: Any):
-        raise UnsupportedFeatureError("user data stream", self.exchange_id)
+        from app.exchanges.bybit_ws import BybitUserDataStream, require_enabled
+
+        require_enabled("user data stream")
+        return BybitUserDataStream(
+            self._api_key, self._api_secret.decode("utf-8"), handler, testnet=self.testnet, client=self, **kw
+        )
 
     @classmethod
     def market_stream(cls, streams: list[str], handler: StreamHandler, *, testnet: bool = True, **kw: Any):
-        raise UnsupportedFeatureError("market stream", cls.exchange_id)
+        from app.exchanges.bybit_ws import BybitMarketStream, require_enabled
+
+        require_enabled("market stream")
+        return BybitMarketStream(streams, handler, testnet=testnet, **kw)
 
 
 __all__ = ["BybitAPIError", "BybitLinearAdapter"]

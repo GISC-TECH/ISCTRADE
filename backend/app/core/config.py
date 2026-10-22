@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     BYBIT_API_URL: str = "https://api.bybit.com"
     BYBIT_TESTNET_API_URL: str = "https://api-testnet.bybit.com"
     BYBIT_RECV_WINDOW: int = 5000
+    # Bybit V5 WebSocket streams (experimental): off by default; without them Bybit accounts rely on REST polling.
+    BYBIT_WS_ENABLED: bool = False
+    BYBIT_WS_PUBLIC_URL: str = "wss://stream.bybit.com/v5/public/linear"
+    BYBIT_TESTNET_WS_PUBLIC_URL: str = "wss://stream-testnet.bybit.com/v5/public/linear"
+    BYBIT_WS_PRIVATE_URL: str = "wss://stream.bybit.com/v5/private"
+    BYBIT_TESTNET_WS_PRIVATE_URL: str = "wss://stream-testnet.bybit.com/v5/private"
 
     # CORS (comma-separated list)
     CORS_ORIGINS: Annotated[list[str], NoDecode] = ["http://localhost:3000"]
