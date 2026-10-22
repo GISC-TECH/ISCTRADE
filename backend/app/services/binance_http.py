@@ -113,6 +113,7 @@ class RateLimitGuard:
             except ValueError:
                 wait = 60.0
             st.banned_until = max(st.banned_until, now + wait)
+            _record_rate_limited(base_url, response.status_code)
             logger.warning(
                 "binance rate limit hit (HTTP %s); pausing requests to %s for %.0fs",
                 response.status_code, base_url, wait,
@@ -139,6 +140,15 @@ class RateLimitGuard:
             raise BinanceAPIError(429, -1003, f"local weight guard: {self.used(base_url, now)} used in the last minute")
         logger.info("binance weight %s near the limit; waiting %.1fs", self.used(base_url, now), wait)
         await asyncio.sleep(wait)
+
+
+def _record_rate_limited(base_url: str, status: int) -> None:
+    try:
+        from app.core.metrics import BINANCE_RATE_LIMITED
+
+        BINANCE_RATE_LIMITED.labels(host=httpx.URL(base_url).host, status=str(status)).inc()
+    except Exception:  # pragma: no cover - metrics must never break requests
+        pass
 
 
 def _set_weight_gauge(base_url: str, value: int) -> None:

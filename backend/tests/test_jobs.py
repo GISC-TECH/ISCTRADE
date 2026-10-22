@@ -30,6 +30,9 @@ def test_beat_schedule_registered() -> None:
         "paper.process_orders",
         "audit.seal",
         "audit.verify",
+        "ops.heartbeat",
+        "ops.deadman_ping",
+        "ops.cleanup",
     }
     import app.tasks.alert_tasks  # noqa: F401
     import app.tasks.audit_tasks  # noqa: F401

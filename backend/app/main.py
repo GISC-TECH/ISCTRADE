@@ -71,9 +71,10 @@ async def health() -> dict[str, str]:
 
 @app.get("/health/ready", tags=["health"])
 async def ready() -> JSONResponse:
-    """Readiness: database, Redis and Celery broker (critical) + streams worker heartbeat (degrades only)."""
+    """Readiness: database, Redis and Celery broker (critical, 503) + beat, workers, WebSockets and bot ticks
+    (status "degraded"; 503 too when HEALTH_READY_STRICT=true). See app/services/health.py."""
     result = await health_service.readiness()
-    return JSONResponse(result, status_code=200 if result["ready"] else 503)
+    return JSONResponse(result, status_code=health_service.http_status(result))
 
 
 @app.get("/metrics", include_in_schema=False)

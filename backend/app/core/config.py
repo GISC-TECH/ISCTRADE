@@ -176,6 +176,31 @@ class Settings(BaseSettings):
     METRICS_TOKEN: str = ""  # optional bearer token required on /metrics (empty = internal network only)
     METRICS_PORT: int = 0  # >0: Celery worker / streams expose their own /metrics on this port
     STREAMS_HEARTBEAT_STALE_SECONDS: int = 180
+    # Local heartbeat files read by the Docker healthchecks of streams/beat (no network dependency).
+    STREAMS_HEARTBEAT_FILE: str = "/tmp/streams-heartbeat"
+    BEAT_HEARTBEAT_FILE: str = "/tmp/beat-heartbeat"
+    # Readiness (/health/ready): a market WS without messages for longer than this is "stale".
+    STREAMS_MESSAGE_STALE_SECONDS: int = 90
+    BEAT_HEARTBEAT_STALE_SECONDS: int = 120
+    WORKER_HEARTBEAT_SECONDS: int = 30  # beat schedules ops.heartbeat on each queue at this period
+    WORKER_HEARTBEAT_STALE_SECONDS: int = 180
+    BOT_TICK_STALE_SECONDS: int = 300  # running bots but no completed tick for this long => degraded
+    # true: /health/ready answers 503 also when degraded (beat/worker/streams stale), not only when DB/Redis fail.
+    HEALTH_READY_STRICT: bool = False
+    # Dead man's switch (healthchecks.io, Uptime Kuma push, Better Stack heartbeat...): GET every
+    # DEADMAN_PING_SECONDS while the stack is healthy; "<url>/fail" when /health/ready is not "ready".
+    DEADMAN_PING_URL: str = ""
+    DEADMAN_PING_SECONDS: int = 60
+    # Bearer token required by POST /api/v1/monitoring/alertmanager (Alertmanager -> WhatsApp). Empty = disabled.
+    ALERTMANAGER_WEBHOOK_TOKEN: str = ""
+
+    # Retention (daily cleanup task ops.cleanup at RETENTION_HOUR_UTC:30). 0 = keep forever.
+    RETENTION_HOUR_UTC: int = 3
+    REFRESH_TOKEN_RETENTION_DAYS: int = 7  # after expiry (expired tokens can never be used again)
+    ALERTS_RETENTION_DAYS: int = 90
+    AUDIT_RETENTION_DAYS: int = 0  # audit trail: kept forever by default (compliance)
+    EQUITY_SNAPSHOT_RETENTION_DAYS: int = 365
+    BACKTEST_RETENTION_DAYS: int = 0
 
     # Alerts (WhatsApp). Messages never contain credentials.
     ALERTS_ENABLED: bool = True  # master switch for generating alerts (history is kept even without a channel)

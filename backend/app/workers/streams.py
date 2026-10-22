@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
 import uuid
 from typing import Any
 
@@ -20,13 +21,14 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import session_scope
 from app.core.logging import configure_logging
-from app.core.metrics import start_metrics_server
+from app.core.metrics import WS_CONNECTED, WS_LAST_MESSAGE_AGE, start_metrics_server
 from app.exchanges.base import ExchangeStream, UnsupportedFeatureError
 from app.exchanges.registry import get_adapter_class
 from app.models import Account, AccountStatus, BotConfig, ExecutionMode
 from app.services import realtime
 from app.services.accounts import client_for_account
 from app.services.health import write_streams_heartbeat
+from app.services.heartbeats import touch_file
 from app.services.prices import cache_prices
 from app.services.reconciler import Reconciler
 from app.strategy.state_machine import ACTIVE_STATES
@@ -67,6 +69,7 @@ class StreamSupervisor:
         self.feeds: list[MarketFeed] = []
         self._stop = asyncio.Event()
         self._prices: dict[bool, dict[str, str]] = {True: {}, False: {}}
+        self._reported: set[tuple[str, str]] = set()
 
     def stop(self) -> None:
         self._stop.set()
@@ -109,10 +112,48 @@ class StreamSupervisor:
             except TimeoutError:
                 pass
 
+    def status(self, now: float | None = None) -> dict[str, Any]:
+        """Real state of every WebSocket (read by /health/ready through Redis); also updates the age gauges."""
+        now = now or time.time()
+        items: list[dict[str, Any]] = []
+
+        def add(stream: Any, kind: str) -> None:
+            if stream is None:
+                return
+            last = getattr(stream, "last_message_at", None)
+            name = str(getattr(stream, "name", kind))
+            items.append({
+                "name": name, "kind": kind, "connected": bool(getattr(stream, "connected", False)),
+                "last_message_at": last, "connections": int(getattr(stream, "connections", 0) or 0),
+            })  # fmt: skip
+            try:
+                WS_LAST_MESSAGE_AGE.labels(stream=name, kind=kind).set(-1 if last is None else max(0.0, now - last))
+            except Exception:  # pragma: no cover - metrics never break the worker
+                pass
+
+        for stream, _task in self.user_streams.values():
+            add(stream, "user")
+        for stream, _task, _symbols in self.market.values():
+            add(stream, "market")
+        for feed in self.feeds:
+            add(getattr(feed, "stream", None), "feed")
+        # Streams that were stopped (account paused, symbols changed) must not leave stale series behind,
+        # otherwise "disconnected"/"stale data" alerts would fire forever.
+        current = {(i["name"], i["kind"]) for i in items}
+        for name, kind in self._reported - current:
+            for gauge, labels in ((WS_LAST_MESSAGE_AGE, (name, kind)), (WS_CONNECTED, (name,))):
+                try:
+                    gauge.remove(*labels)
+                except KeyError:
+                    pass
+        self._reported = current
+        return {"ts": now, "streams": items}
+
     async def _heartbeat(self) -> None:
-        """Liveness signal read by /health/ready and the btp_streams_heartbeat_age_seconds gauge."""
+        """Liveness signal: Redis (/health/ready, btp_streams_heartbeat_age_seconds) + local file (Docker)."""
         while not self._stop.is_set():
-            await write_streams_heartbeat()
+            touch_file(settings.STREAMS_HEARTBEAT_FILE)
+            await write_streams_heartbeat(self.status())
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=HEARTBEAT_SECONDS)
             except TimeoutError:

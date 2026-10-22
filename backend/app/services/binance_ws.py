@@ -58,6 +58,9 @@ class BinanceStream:
         self.max_age = max_age
         self.connections = 0
         self.messages = 0
+        # Real connection state for /health/ready (wall clock, shared through Redis by the streams worker).
+        self.connected = False
+        self.last_message_at: float | None = None
         self._stop = asyncio.Event()
         self.down_since: float | None = time.monotonic()
         self.down_alerted = False
@@ -148,6 +151,7 @@ class BinanceStream:
                 url = await self.url()
                 async with ws_connect(url, ping_interval=20, ping_timeout=20, open_timeout=10) as ws:
                     self.connections += 1
+                    self.connected = True
                     backoff = self.initial_backoff
                     await self._mark_connected()
                     opened = last_msg = time.monotonic()
@@ -166,6 +170,7 @@ class BinanceStream:
                                 break
                             continue
                         last_msg = time.monotonic()
+                        self.last_message_at = time.time()
                         self.messages += 1
                         msg = json.loads(raw)
                         if await self._dispatch(msg) is False:
@@ -175,6 +180,7 @@ class BinanceStream:
             except Exception:
                 logger.exception("ws %s unexpected error", self.name)
             finally:
+                self.connected = False
                 await self.on_close()
             if self._stop.is_set():
                 break

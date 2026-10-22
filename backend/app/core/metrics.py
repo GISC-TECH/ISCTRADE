@@ -43,6 +43,12 @@ BINANCE_USED_WEIGHT = Gauge(
     ["host"],
     multiprocess_mode="max",
 )
+BINANCE_RATE_LIMITED = Counter(
+    "btp_binance_rate_limited_total", "HTTP 429 (rate limit) / 418 (IP ban) answers from Binance", ["host", "status"]
+)
+WS_LAST_MESSAGE_AGE = Gauge(
+    "btp_ws_last_message_age_seconds", "Seconds since the last message of a WebSocket (-1 = never)", ["stream", "kind"]
+)
 ALERTS = Counter("btp_alerts_total", "Alerts by event and delivery status", ["event", "status"])
 
 
@@ -98,6 +104,23 @@ class DatabaseCollector:
         age = snap.get("streams_heartbeat_age")
         yield GaugeMetricFamily(
             "btp_streams_heartbeat_age_seconds", "Seconds since the streams worker heartbeat (-1 = never)",
+            value=-1 if age is None else age,
+        )  # fmt: skip
+        age = snap.get("beat_heartbeat_age")
+        yield GaugeMetricFamily(
+            "btp_beat_heartbeat_age_seconds", "Seconds since the Celery beat heartbeat (-1 = never)",
+            value=-1 if age is None else age,
+        )  # fmt: skip
+        g = GaugeMetricFamily(
+            "btp_worker_heartbeat_age_seconds", "Seconds since ops.heartbeat ran on the queue (-1 = never)",
+            labels=["queue"],
+        )  # fmt: skip
+        for queue, age in snap.get("worker_heartbeat_age", {}).items():
+            g.add_metric([queue], -1 if age is None else age)
+        yield g
+        age = snap.get("bot_tick_age")
+        yield GaugeMetricFamily(
+            "btp_bot_last_tick_age_seconds", "Seconds since the last completed bot tick (-1 = never)",
             value=-1 if age is None else age,
         )  # fmt: skip
         g = GaugeMetricFamily("btp_alerts_last_24h", "Alerts recorded in the last 24h", labels=["status"])

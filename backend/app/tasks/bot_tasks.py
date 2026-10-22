@@ -7,6 +7,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.services import jobs
+from app.services.heartbeats import BOT_TICK_KEY, touch_sync
 from app.tasks.celery_app import celery_app
 from app.tasks.runtime import run_async
 
@@ -26,7 +27,11 @@ def tick_all() -> dict[str, Any]:
 
 @celery_app.task(name="bots.tick", soft_time_limit=90, time_limit=120)
 def tick_bot(bot_id: str) -> dict[str, Any]:
-    return run_async(lambda s: jobs.tick_bot(s, uuid.UUID(bot_id)))
+    result = run_async(lambda s: jobs.tick_bot(s, uuid.UUID(bot_id)))
+    if isinstance(result, dict) and result.get("status") not in ("skipped", "missing"):
+        # last completed tick: /health/ready (bot_ticks) and btp_bot_last_tick_age_seconds
+        touch_sync(BOT_TICK_KEY, max(settings.BOT_TICK_STALE_SECONDS, settings.BOT_TICK_SECONDS * 3) * 4)
+    return result
 
 
 @celery_app.task(name="bots.start")

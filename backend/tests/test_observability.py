@@ -89,10 +89,11 @@ async def test_ready_degraded_without_streams_and_ready_with_heartbeat(client, m
     assert r.status_code == 200 and r.json()["status"] == "degraded"
     assert r.json()["checks"]["streams"]["state"] == "missing"
 
-    async def fresh():
+    async def fresh(*_a):
         return 5.0
 
     monkeypatch.setattr(health_service, "streams_heartbeat_age", fresh)
+    monkeypatch.setattr(health_service, "key_age", fresh)  # beat + worker heartbeats
     r = await client.get("/health/ready")
     assert r.status_code == 200 and r.json()["status"] == "ready"
 

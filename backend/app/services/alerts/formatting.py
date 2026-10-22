@@ -83,6 +83,8 @@ def _title(event: str, data: dict[str, Any]) -> str:
         return "WebSocket reconectado"
     if event == AlertEvent.DAILY_SUMMARY.value:
         return "Resumo diário"
+    if event == AlertEvent.INFRA_ALERT.value:
+        return f"{'Resolvido' if data.get('resolved') else 'Alerta'}: {data.get('alertname', 'Prometheus')}"
     spec = EVENTS.get(event)
     return spec.label if spec else event
 
@@ -116,7 +118,9 @@ def render(event: str, severity: str, data: dict[str, Any], *, now: datetime | N
     title = _title(event, data)
     if event == AlertEvent.KILL_SWITCH_GLOBAL.value and not data.get("active", True):
         emoji = "✅"
-    elif event == AlertEvent.WS_DISCONNECTED.value and data.get("recovered"):
+    elif event in (AlertEvent.WS_DISCONNECTED.value, AlertEvent.INFRA_ALERT.value) and (
+        data.get("recovered") or data.get("resolved")
+    ):
         emoji = "✅"
     elif event == AlertEvent.DAILY_SUMMARY.value:
         emoji = "📊"

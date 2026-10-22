@@ -15,6 +15,7 @@ celery_app = Celery(
         "app.tasks.news_tasks",
         "app.tasks.trading_tasks",
         "app.tasks.audit_tasks",
+        "app.tasks.ops_tasks",
     ],
 )
 # Queues: trading-critical work (bot ticks, paper order book, reconciliation, equity/risk) never waits behind
@@ -33,6 +34,7 @@ TASK_ROUTES = {
     "calendar.*": {"queue": DEFAULT_QUEUE},
     "alerts.*": {"queue": DEFAULT_QUEUE},
     "audit.*": {"queue": DEFAULT_QUEUE},
+    "ops.*": {"queue": DEFAULT_QUEUE},  # ops.heartbeat is sent explicitly to each queue (beat_schedule)
 }
 
 celery_app.conf.update(
@@ -54,6 +56,8 @@ celery_app.conf.update(
     task_soft_time_limit=120,
     task_time_limit=180,
     broker_connection_retry_on_startup=True,
+    # The beat scheduler writes its heartbeat on every loop (app.tasks.beat.HeartbeatScheduler).
+    beat_max_loop_interval=10,
     beat_schedule={
         "tick-bots": {"task": "bots.tick_all", "schedule": float(settings.BOT_TICK_SECONDS)},
         "reconcile-accounts": {"task": "accounts.reconcile_all", "schedule": float(settings.RECONCILE_SECONDS)},
@@ -66,6 +70,25 @@ celery_app.conf.update(
         "paper-orders": {"task": "paper.process_orders", "schedule": float(settings.PAPER_ORDER_CHECK_SECONDS)},
         "audit-seal": {"task": "audit.seal", "schedule": float(settings.AUDIT_SEAL_SECONDS)},
         "audit-verify": {"task": "audit.verify", "schedule": crontab(hour=3, minute=17)},
+        # Heartbeats per queue (readiness: worker_trading / worker_default) and the dead man's switch ping.
+        "heartbeat-trading": {
+            "task": "ops.heartbeat",
+            "schedule": float(settings.WORKER_HEARTBEAT_SECONDS),
+            "args": (TRADING_QUEUE,),
+            "options": {"queue": TRADING_QUEUE, "expires": float(settings.WORKER_HEARTBEAT_SECONDS)},
+        },
+        "heartbeat-default": {
+            "task": "ops.heartbeat",
+            "schedule": float(settings.WORKER_HEARTBEAT_SECONDS),
+            "args": (DEFAULT_QUEUE,),
+            "options": {"queue": DEFAULT_QUEUE, "expires": float(settings.WORKER_HEARTBEAT_SECONDS)},
+        },
+        "deadman-ping": {
+            "task": "ops.deadman_ping",
+            "schedule": float(settings.DEADMAN_PING_SECONDS),
+            "options": {"expires": float(settings.DEADMAN_PING_SECONDS)},
+        },
+        "retention-cleanup": {"task": "ops.cleanup", "schedule": crontab(hour=settings.RETENTION_HOUR_UTC, minute=30)},
         "alerts-daily-summary": {
             "task": "alerts.daily_summary",
             "schedule": crontab(hour=settings.ALERT_DAILY_SUMMARY_HOUR_UTC, minute=5),

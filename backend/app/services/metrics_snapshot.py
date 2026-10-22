@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Account, BotConfig, Position
 from app.services.alerts.service import recent_alert_counts
 from app.services.execution import is_global_kill_switch_on
-from app.services.health import streams_heartbeat_age
+from app.services.health import key_age, streams_heartbeat_age
+from app.services.heartbeats import BEAT_KEY, BOT_TICK_KEY, WORKER_QUEUES, worker_key
 
 
 def _f(v: Any) -> float | None:
@@ -50,5 +51,8 @@ async def collect(db: AsyncSession) -> dict[str, Any]:
         "account_rows": rows,
         "global_kill": await is_global_kill_switch_on(db),
         "streams_heartbeat_age": await streams_heartbeat_age(),
+        "beat_heartbeat_age": await key_age(BEAT_KEY),
+        "worker_heartbeat_age": {q: await key_age(worker_key(q)) for q in WORKER_QUEUES},
+        "bot_tick_age": await key_age(BOT_TICK_KEY),
         "alerts_24h": await recent_alert_counts(db),
     }

@@ -54,11 +54,29 @@ CLOSE_TOO_MANY = 4429
 _connections: dict[uuid.UUID, int] = defaultdict(int)
 
 
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+
+
 def origin_allowed(origin: str | None) -> bool:
     if not origin:  # non-browser clients do not send Origin (and cannot be driven cross-site)
         return True
     allowed = {o.rstrip("/") for o in settings.CORS_ORIGINS}
-    return origin.rstrip("/") in allowed
+    if origin.rstrip("/") in allowed:
+        return True
+    if not settings.is_production:
+        # Development: the panel opened on any loopback port (Next.js on :3000, 127.0.0.1 vs localhost) works
+        # without listing every variant. Production always requires an exact CORS_ORIGINS match.
+        from urllib.parse import urlsplit
+
+        try:
+            parts = urlsplit(origin)
+            host = (parts.hostname or "").lower()
+        except ValueError:
+            return False
+        if parts.scheme in ("http", "https") and (host in LOOPBACK_HOSTS or f"[{host}]" in LOOPBACK_HOSTS):
+            return True
+    logger.warning("websocket origin rejected (add it to CORS_ORIGINS): %s", origin[:200])
+    return False
 
 
 class Subscription:
