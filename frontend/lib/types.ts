@@ -687,3 +687,26 @@ export interface CloseAllResult {
   failed: string[];
   orders_canceled: number;
 }
+
+/** Self-service signup policy (`GET /auth/registration`). */
+export type RegistrationMode = "closed" | "invite" | "open";
+
+export type InviteStatus = "pending" | "used" | "expired" | "revoked";
+
+/** Registration invite as listed by `GET /admin/invites` (the token itself is never returned again). */
+export interface RegistrationInvite {
+  id: string;
+  email: string | null;
+  note: string | null;
+  status: InviteStatus;
+  created_at: string;
+  expires_at: string;
+  used_at: string | null;
+  used_by_id: string | null;
+}
+
+/** `POST /admin/invites`: the only response that carries the plain token. */
+export interface InviteCreated extends RegistrationInvite {
+  token: string;
+  registration_mode: RegistrationMode;
+}

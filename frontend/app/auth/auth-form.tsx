@@ -2,16 +2,21 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { LegalFooter } from "@/components/legal";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, errorMessage, setActiveWorkspace } from "@/lib/api";
-import type { TokenResponse } from "@/lib/types";
+import type { RegistrationMode, TokenResponse } from "@/lib/types";
 
 export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const router = useRouter();
@@ -24,17 +29,42 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const [useRecovery, setUseRecovery] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [invite, setInvite] = useState(
+    () => params.get("convite") ?? params.get("invite") ?? "",
+  );
+  // Signup policy from the API (closed / invite / open); null while loading or if the request fails.
+  const [signup, setSignup] = useState<RegistrationMode | null>(null);
   const isLogin = mode === "login";
+  const closed = !isLogin && signup === "closed";
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .registrationMode()
+      .then((r) => alive && setSignup(r.mode))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   function finish(res: TokenResponse) {
     setActiveWorkspace(res.user.active_workspace_id);
     const next = params.get("next");
     // Users that must enrol in 2FA land on Segurança (the API is blocked for them until then).
-    if (res.user.mfa_required && !res.user.totp_enabled && res.user.mfa_reason !== "admin") {
+    if (
+      res.user.mfa_required &&
+      !res.user.totp_enabled &&
+      res.user.mfa_reason !== "admin"
+    ) {
       router.push("/dashboard/security?obrigatorio=1");
       return;
     }
-    router.push(next && next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard");
+    router.push(
+      next && next.startsWith("/") && !next.startsWith("//")
+        ? next
+        : "/dashboard",
+    );
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -44,7 +74,14 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     try {
       if (!isLogin) {
         // Registration signs in immediately (same cookies as login): go straight to the dashboard.
-        finish(await api.register(email, password, fullName || undefined));
+        finish(
+          await api.register(
+            email,
+            password,
+            fullName || undefined,
+            invite.trim() || undefined,
+          ),
+        );
         return;
       }
       const res = await api.login(email, password);
@@ -79,14 +116,23 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     }
   }
 
-  const title = mfaToken ? "Verificação em duas etapas" : isLogin ? "Entrar" : "Criar conta";
+  const title = mfaToken
+    ? "Verificação em duas etapas"
+    : isLogin
+      ? "Entrar"
+      : "Criar conta";
 
   return (
     <div className="flex min-h-screen flex-col">
-      <main id="conteudo" className="container flex flex-1 items-center justify-center py-8">
+      <main
+        id="conteudo"
+        className="container flex flex-1 items-center justify-center py-8"
+      >
         <Card className="w-full max-w-sm">
           <CardHeader>
-            <h1 className="text-2xl font-semibold leading-none tracking-tight">{title}</h1>
+            <h1 className="text-2xl font-semibold leading-none tracking-tight">
+              {title}
+            </h1>
             <CardDescription>
               {mfaToken
                 ? useRecovery
@@ -94,14 +140,18 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
                   : "Digite o código de 6 dígitos do seu aplicativo autenticador."
                 : isLogin
                   ? "Acesse sua plataforma de trading."
-                  : "O primeiro usuário cadastrado vira administrador."}
+                  : signup === "invite"
+                    ? "Cadastro somente por convite: use o código enviado pelo administrador."
+                    : "Ao concluir o cadastro você já entra na plataforma."}
             </CardDescription>
           </CardHeader>
           <CardContent>
             {mfaToken ? (
               <form onSubmit={onSubmitCode} className="space-y-4" noValidate>
                 <div className="space-y-2">
-                  <Label htmlFor="mfa-code">{useRecovery ? "Código de recuperação" : "Código 2FA"}</Label>
+                  <Label htmlFor="mfa-code">
+                    {useRecovery ? "Código de recuperação" : "Código 2FA"}
+                  </Label>
                   <Input
                     id="mfa-code"
                     required
@@ -116,7 +166,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
                   />
                 </div>
                 {error && <Alert variant="destructive">{error}</Alert>}
-                <Button type="submit" className="w-full" disabled={loading || code.trim().length < 6}>
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={loading || code.trim().length < 6}
+                >
                   {loading ? "Verificando..." : "Verificar"}
                 </Button>
                 <div className="flex justify-between text-sm">
@@ -128,7 +182,9 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
                       setCode("");
                     }}
                   >
-                    {useRecovery ? "Usar o aplicativo autenticador" : "Usar código de recuperação"}
+                    {useRecovery
+                      ? "Usar o aplicativo autenticador"
+                      : "Usar código de recuperação"}
                   </button>
                   <button
                     type="button"
@@ -143,12 +199,30 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
                   </button>
                 </div>
               </form>
+            ) : closed ? (
+              <div className="space-y-4">
+                <Alert>
+                  O cadastro está fechado nesta instalação. Peça ao
+                  administrador um convite ou que crie a sua conta.
+                </Alert>
+                <p className="text-center text-sm text-muted-foreground">
+                  Já tem conta?{" "}
+                  <Link className="underline" href="/auth/login">
+                    Entrar
+                  </Link>
+                </p>
+              </div>
             ) : (
               <form onSubmit={onSubmit} className="space-y-4">
                 {!isLogin && (
                   <div className="space-y-2">
                     <Label htmlFor="name">Nome</Label>
-                    <Input id="name" value={fullName} onChange={(e) => setFullName(e.target.value)} autoComplete="name" />
+                    <Input
+                      id="name"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      autoComplete="name"
+                    />
                   </div>
                 )}
                 <div className="space-y-2">
@@ -175,23 +249,41 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
                     aria-describedby={isLogin ? undefined : "password-hint"}
                   />
                   {!isLogin && (
-                    <p id="password-hint" className="text-xs text-muted-foreground">
+                    <p
+                      id="password-hint"
+                      className="text-xs text-muted-foreground"
+                    >
                       Mínimo de 8 caracteres.
                     </p>
                   )}
                 </div>
+                {!isLogin && signup === "invite" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="invite">Código de convite</Label>
+                    <Input
+                      id="invite"
+                      required
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={invite}
+                      onChange={(e) => setInvite(e.target.value)}
+                    />
+                  </div>
+                )}
                 {error && <Alert variant="destructive">{error}</Alert>}
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? "Aguarde..." : isLogin ? "Entrar" : "Criar conta"}
                 </Button>
                 <p className="text-center text-sm text-muted-foreground">
                   {isLogin ? (
-                    <>
-                      Não tem conta?{" "}
-                      <Link className="underline" href="/auth/register">
-                        Cadastre-se
-                      </Link>
-                    </>
+                    signup !== "closed" && (
+                      <>
+                        Não tem conta?{" "}
+                        <Link className="underline" href="/auth/register">
+                          Cadastre-se
+                        </Link>
+                      </>
+                    )
                   ) : (
                     <>
                       Já tem conta?{" "}

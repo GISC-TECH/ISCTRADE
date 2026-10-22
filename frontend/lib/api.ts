@@ -11,6 +11,7 @@ import type {
   AlertSettingsUpdate,
   AssetSentiment,
   AuditEntry,
+  InviteCreated,
   BacktestRequest,
   WalkForwardRequest,
   BacktestRun,
@@ -18,6 +19,8 @@ import type {
   BotOptions,
   BotPreset,
   PresetWrite,
+  RegistrationInvite,
+  RegistrationMode,
   Candle,
   CloseAllResult,
   EconomicEvent,
@@ -170,8 +173,9 @@ const del = (path: string) => request<void>(path, { method: "DELETE" });
 
 export const api = {
   // auth
-  register: (email: string, password: string, full_name?: string) =>
-    post<TokenResponse>("/auth/register", { email, password, full_name }), // also signs in (cookies)
+  register: (email: string, password: string, full_name?: string, invite_token?: string) =>
+    post<TokenResponse>("/auth/register", { email, password, full_name, invite_token }), // also signs in (cookies)
+  registrationMode: () => request<{ mode: RegistrationMode }>("/auth/registration"),
   login: (email: string, password: string) => post<TokenResponse | MfaChallenge>("/auth/login", { email, password }),
   login2fa: (mfa_token: string, code: string) => post<TokenResponse>("/auth/login/2fa", { mfa_token, code }),
   acceptDisclaimer: (version: string) => post<User>("/auth/me/disclaimer", { version }),
@@ -296,6 +300,9 @@ export const api = {
 
   // admin
   adminStats: () => request<AdminStats>("/admin/stats"),
+  adminInvites: () => request<RegistrationInvite[]>("/admin/invites"),
+  adminCreateInvite: (data: { email?: string; note?: string; hours?: number }) => post<InviteCreated>("/admin/invites", data),
+  adminRevokeInvite: (id: string) => request<RegistrationInvite>(`/admin/invites/${id}`, { method: "DELETE" }),
   adminUsers: (params?: Query) => request<Page<User>>(`/admin/users${qs(params)}`),
   adminUpdateUser: (id: string, data: { role?: Role; is_active?: boolean }) => patch<User>(`/admin/users/${id}`, data),
   adminWorkspaces: (params?: Query) => request<Page<AdminWorkspace>>(`/admin/workspaces${qs(params)}`),

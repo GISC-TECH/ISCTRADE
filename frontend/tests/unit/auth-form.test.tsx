@@ -27,7 +27,10 @@ const user: User = {
 } as User;
 const token = { access_token: "a", token_type: "bearer", expires_in: 900, user } as TokenResponse;
 
-beforeEach(() => push.mockReset());
+beforeEach(() => {
+  push.mockReset();
+  vi.spyOn(api, "registrationMode").mockResolvedValue({ mode: "open" });
+});
 
 describe("AuthForm", () => {
   it("asks for the TOTP code after the password and then follows ?next=", async () => {
@@ -86,5 +89,28 @@ describe("AuthForm", () => {
     await u.type(screen.getByLabelText("Senha"), "segredo-123");
     await u.click(screen.getByRole("button", { name: "Entrar" }));
     expect(push).toHaveBeenCalledWith("/dashboard/security?obrigatorio=1");
+  });
+
+  it("closed signup shows a notice instead of the form and hides the sign-up link", async () => {
+    vi.spyOn(api, "registrationMode").mockResolvedValue({ mode: "closed" });
+    const { unmount } = render(<AuthForm mode="register" />);
+    expect(await screen.findByText(/cadastro está fechado/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Senha")).not.toBeInTheDocument();
+    unmount();
+    render(<AuthForm mode="login" />);
+    await screen.findByRole("heading", { name: "Entrar" });
+    await vi.waitFor(() => expect(screen.queryByRole("link", { name: "Cadastre-se" })).not.toBeInTheDocument());
+  });
+
+  it("invite-only signup asks for the invite code and sends it", async () => {
+    vi.spyOn(api, "registrationMode").mockResolvedValue({ mode: "invite" });
+    const register = vi.spyOn(api, "register").mockResolvedValue(token);
+    render(<AuthForm mode="register" />);
+    const u = userEvent.setup();
+    await u.type(await screen.findByLabelText("Código de convite"), "abc123");
+    await u.type(screen.getByLabelText("E-mail"), "ana@exemplo.com");
+    await u.type(screen.getByLabelText("Senha"), "segredo-123");
+    await u.click(screen.getByRole("button", { name: /criar conta/i }));
+    expect(register).toHaveBeenCalledWith("ana@exemplo.com", "segredo-123", undefined, "abc123");
   });
 });

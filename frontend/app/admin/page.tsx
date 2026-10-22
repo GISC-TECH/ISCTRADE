@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { InvitesTab } from "@/components/admin-invites";
 import { useAuth } from "@/components/auth-provider";
 import { EmptyState, PageHeader, Pager } from "@/components/common";
 import { AuditTable, LIMIT, usePaged } from "@/components/paged";
@@ -292,11 +293,15 @@ export default function AdminPage() {
           <Tabs defaultValue="users">
             <TabsList>
               <TabsTrigger value="users">Usuários</TabsTrigger>
+              <TabsTrigger value="invites">Convites</TabsTrigger>
               <TabsTrigger value="workspaces">Workspaces</TabsTrigger>
               <TabsTrigger value="audit">Auditoria global</TabsTrigger>
             </TabsList>
             <TabsContent value="users" className="pt-3">
               <UsersTab me={user} />
+            </TabsContent>
+            <TabsContent value="invites" className="pt-3">
+              <InvitesTab />
             </TabsContent>
             <TabsContent value="workspaces" className="pt-3">
               <WorkspacesTab />
