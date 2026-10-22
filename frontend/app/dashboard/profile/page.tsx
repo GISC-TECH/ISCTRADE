@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
 import { PageHeader } from "@/components/common";
@@ -12,15 +14,33 @@ import { Label } from "@/components/ui/label";
 import { api, errorMessage, setActiveWorkspace } from "@/lib/api";
 import { dateTime } from "@/lib/format";
 
+/** Remounted (key) when the saved name changes, so the input starts from the server value without an effect. */
+function NameForm({ initial, onSave }: { initial: string; onSave: (name: string) => void }) {
+  const [fullName, setFullName] = useState(initial);
+  return (
+    <form
+      className="flex items-end gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave(fullName);
+      }}
+    >
+      <div className="flex-1 space-y-1">
+        <Label htmlFor="p-name">Nome</Label>
+        <Input id="p-name" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+      </div>
+      <Button type="submit">Salvar</Button>
+    </form>
+  );
+}
+
 export default function ProfilePage() {
   const { user, reload } = useAuth();
-  const [fullName, setFullName] = useState("");
+  const router = useRouter();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-
-  useEffect(() => setFullName(user?.full_name ?? ""), [user]);
 
   async function run(fn: () => Promise<unknown>, ok: string) {
     setMsg(null);
@@ -42,22 +62,16 @@ export default function ProfilePage() {
           <CardTitle className="text-lg">Dados pessoais</CardTitle>
         </CardHeader>
         <CardContent>
-          <form
-            className="flex items-end gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
+          <NameForm
+            key={user.full_name ?? ""}
+            initial={user.full_name ?? ""}
+            onSave={(fullName) =>
               run(async () => {
                 await api.updateMe({ full_name: fullName || null });
                 await reload();
-              }, "Perfil atualizado.");
-            }}
-          >
-            <div className="flex-1 space-y-1">
-              <Label htmlFor="p-name">Nome</Label>
-              <Input id="p-name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
-            </div>
-            <Button type="submit">Salvar</Button>
-          </form>
+              }, "Perfil atualizado.")
+            }
+          />
         </CardContent>
       </Card>
       <Card>
@@ -100,6 +114,19 @@ export default function ProfilePage() {
       </Card>
       <Card>
         <CardHeader>
+          <CardTitle className="text-lg">Autenticação em dois fatores</CardTitle>
+          <CardDescription>
+            {user.totp_enabled ? "2FA ativo." : "2FA desativado — recomendado para todos e obrigatório para contas reais."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild variant="outline">
+            <Link href="/dashboard/security">Gerenciar 2FA</Link>
+          </Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
           <CardTitle className="text-lg">Sessões</CardTitle>
           <CardDescription>Revoga todos os tokens emitidos, inclusive o desta sessão.</CardDescription>
         </CardHeader>
@@ -110,7 +137,7 @@ export default function ProfilePage() {
               if (!confirm("Encerrar todas as sessões?")) return;
               await api.logoutAll().catch(() => undefined);
               setActiveWorkspace(null);
-              window.location.href = "/auth/login";
+              router.replace("/auth/login");
             }}
           >
             Sair de todos os dispositivos

@@ -113,8 +113,12 @@ export function CandleChart({
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const barsRef = useRef<CandlestickData<UTCTimestamp>[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Which request finished last (and how): loading/error are derived from it, so the history effect only sets
+  // state from its async callbacks.
+  const historyKey = `${symbol}|${interval}|${testnet ? 1 : 0}`;
+  const [loaded, setLoaded] = useState<{ key: string; error: string | null } | null>(null);
+  const loading = loaded?.key !== historyKey;
+  const error = loaded?.key === historyKey ? loaded.error : null;
   const emaKey = emas.join(",");
 
   // create / destroy the chart
@@ -209,8 +213,6 @@ export function CandleChart({
   // history
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
     api
       .klines({ symbol, interval, limit: 500, testnet })
       .then((rows) => {
@@ -220,12 +222,12 @@ export function CandleChart({
         refreshEmas();
         chartRef.current?.timeScale().fitContent();
       })
-      .catch((e) => !cancelled && setError(errorMessage(e)))
-      .finally(() => !cancelled && setLoading(false));
+      .then(() => !cancelled && setLoaded({ key: historyKey, error: null }))
+      .catch((e) => !cancelled && setLoaded({ key: historyKey, error: errorMessage(e) }));
     return () => {
       cancelled = true;
     };
-  }, [symbol, interval, testnet, emaKey, refreshEmas]);
+  }, [symbol, interval, testnet, emaKey, refreshEmas, historyKey]);
 
   // live candles
   useKlineStream(symbol, interval, (k: KlineMsg) => {

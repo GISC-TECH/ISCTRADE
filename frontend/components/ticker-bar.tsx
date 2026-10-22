@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 import { ConnectionIndicator, useRealtimeNet, useTicker, useWatchSymbols } from "@/components/realtime-provider";
 import { cn } from "@/lib/utils";
@@ -14,15 +14,38 @@ export function formatPrice(v: number | null | undefined): string {
   return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: digits });
 }
 
-function loadWatchlist(): string[] {
-  if (typeof window === "undefined") return DEFAULT_WATCHLIST;
+function parseWatchlist(value: string | null): string[] {
   try {
-    const raw = JSON.parse(window.localStorage.getItem(WATCHLIST_KEY) ?? "null");
+    const raw = JSON.parse(value ?? "null");
     if (Array.isArray(raw) && raw.every((s) => typeof s === "string")) return raw.slice(0, 20);
   } catch {
     /* ignore */
   }
   return DEFAULT_WATCHLIST;
+}
+
+// Watchlist persisted in localStorage, read through useSyncExternalStore (no setState-in-effect, SSR-safe).
+const watchlistListeners = new Set<() => void>();
+let watchlistCache: { raw: string | null; list: string[] } = { raw: null, list: DEFAULT_WATCHLIST };
+
+function subscribeWatchlist(cb: () => void) {
+  watchlistListeners.add(cb);
+  window.addEventListener("storage", cb);
+  return () => {
+    watchlistListeners.delete(cb);
+    window.removeEventListener("storage", cb);
+  };
+}
+
+function getWatchlist(): string[] {
+  const raw = window.localStorage.getItem(WATCHLIST_KEY);
+  if (raw !== watchlistCache.raw) watchlistCache = { raw, list: parseWatchlist(raw) };
+  return watchlistCache.list;
+}
+
+function saveWatchlist(list: string[]) {
+  window.localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+  watchlistListeners.forEach((cb) => cb());
 }
 
 /** One quote; subscribes to its own symbol so a message re-renders only the symbols it changed. */
@@ -41,13 +64,11 @@ function TickerItem({ symbol }: { symbol: string }) {
 }
 
 export function TickerBar() {
-  const [symbols, setSymbols] = useState<string[]>(DEFAULT_WATCHLIST);
+  const symbols = useSyncExternalStore(subscribeWatchlist, getWatchlist, () => DEFAULT_WATCHLIST);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const net = useRealtimeNet();
   useWatchSymbols(symbols);
-
-  useEffect(() => setSymbols(loadWatchlist()), []);
 
   const save = () => {
     const list = draft
@@ -57,8 +78,7 @@ export function TickerBar() {
       .map((s) => (s.endsWith("USDT") ? s : `${s}USDT`))
       .slice(0, 20);
     const next = list.length ? Array.from(new Set(list)) : DEFAULT_WATCHLIST;
-    window.localStorage.setItem(WATCHLIST_KEY, JSON.stringify(next));
-    setSymbols(next);
+    saveWatchlist(next);
     setEditing(false);
   };
 

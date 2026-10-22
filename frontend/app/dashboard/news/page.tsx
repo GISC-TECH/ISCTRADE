@@ -22,7 +22,6 @@ export default function NewsPage() {
   const { workspace } = useAuth();
   const [items, setItems] = useState<NewsItem[] | null>(null);
   const [total, setTotal] = useState(0);
-  const [offset, setOffset] = useState(0);
   const [gauges, setGauges] = useState<AssetSentiment[]>([]);
   const [status, setStatus] = useState<NewsStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +32,11 @@ export default function NewsPage() {
   const [source, setSource] = useState("");
   const [search, setSearch] = useState("");
   const canTrade = workspace?.role === "admin" || workspace?.role === "trader";
+  // Page offset is tied to the current filters: changing any filter goes back to the first page.
+  const filterKey = [symbol, impact, sentiment, source, search].join("|");
+  const [paging, setPaging] = useState({ key: filterKey, offset: 0 });
+  const offset = paging.key === filterKey ? paging.offset : 0;
+  const setOffset = (o: number) => setPaging({ key: filterKey, offset: o });
 
   const load = useCallback(() => {
     api
@@ -62,7 +66,6 @@ export default function NewsPage() {
   useEffect(() => {
     api.newsStatus().then(setStatus).catch(() => undefined);
   }, [workspace?.id]);
-  useEffect(() => setOffset(0), [symbol, impact, sentiment, source, search]);
 
   async function refresh() {
     setInfo(null);

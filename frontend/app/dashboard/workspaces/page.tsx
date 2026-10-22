@@ -97,6 +97,7 @@ function Members({ ws, canManage }: { ws: Workspace; canManage: boolean }) {
                       <Badge>Proprietário</Badge>
                     ) : canManage ? (
                       <Select
+                        aria-label={`Papel de ${m.email}`}
                         className="h-8 w-40"
                         value={m.role}
                         onChange={(e) => run(() => api.updateMember(ws.id, m.user_id, e.target.value as Role))}

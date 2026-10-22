@@ -65,21 +65,21 @@ export default function DashboardPage() {
       .catch((e) => setError(errorMessage(e)));
   }, [workspace?.id]);
 
-  const load = useCallback(async () => {
-    if (!selected) return;
-    try {
-      const [d, eq, b] = await Promise.all([
-        api.accountDashboard(selected),
-        api.equity({ account_id: selected, limit: 500 }),
-        api.listBots(selected),
-      ]);
-      setDash(d);
-      setEquity(eq.map((p) => ({ date: dateTime(p.taken_at), equity: num(p.equity) })));
-      setBots(b);
-      setError(null);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
+  // Promise chain: state is only set from async callbacks (no synchronous setState inside the effect).
+  const load = useCallback(() => {
+    if (!selected) return Promise.resolve();
+    return Promise.all([
+      api.accountDashboard(selected),
+      api.equity({ account_id: selected, limit: 500 }),
+      api.listBots(selected),
+    ])
+      .then(([d, eq, b]) => {
+        setDash(d);
+        setEquity(eq.map((p) => ({ date: dateTime(p.taken_at), equity: num(p.equity) })));
+        setBots(b);
+        setError(null);
+      })
+      .catch((e) => setError(errorMessage(e)));
   }, [selected]);
 
   useEffect(() => {
@@ -96,7 +96,7 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <PageHeader title="Dashboard" description={workspace ? `Workspace: ${workspace.name}` : undefined}>
         {accounts && accounts.length > 0 && (
-          <Select value={selected} onChange={(e) => setSelected(e.target.value)} className="w-64">
+          <Select aria-label="Conta exibida" value={selected} onChange={(e) => setSelected(e.target.value)} className="w-64">
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.label} ({a.execution_mode === "live" ? "real" : "paper"}

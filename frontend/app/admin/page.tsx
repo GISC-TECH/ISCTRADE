@@ -14,12 +14,24 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api, errorMessage } from "@/lib/api";
 import { dateTime } from "@/lib/format";
-import type { AdminStats, AdminWorkspace, User } from "@/lib/types";
+import type { AdminStats, AdminWorkspace, SecurityPolicy, User } from "@/lib/types";
 
 function UsersTab({ me }: { me: User }) {
   const [tick, setTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const { page, error: loadError, offset, go } = usePaged<User>((o) => api.adminUsers({ limit: LIMIT, offset: o }), [tick]);
+
+  async function reset2fa(u: User) {
+    if (!confirm(`Redefinir o 2FA de ${u.email}? Todas as sessões dessa pessoa serão encerradas e ela precisará cadastrar o autenticador de novo.`))
+      return;
+    setError(null);
+    try {
+      await api.adminReset2fa(u.id);
+      setTick((t) => t + 1);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
 
   async function update(id: string, data: Parameters<typeof api.adminUpdateUser>[1]) {
     setError(null);
@@ -42,6 +54,7 @@ function UsersTab({ me }: { me: User }) {
             <TableHead>Usuário</TableHead>
             <TableHead>Papel global</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>2FA</TableHead>
             <TableHead>Cadastro</TableHead>
             <TableHead className="text-right">Ações</TableHead>
           </TableRow>
@@ -59,10 +72,20 @@ function UsersTab({ me }: { me: User }) {
               <TableCell>
                 <Badge variant={u.is_active ? "success" : "destructive"}>{u.is_active ? "Ativo" : "Bloqueado"}</Badge>
               </TableCell>
+              <TableCell>
+                <Badge variant={u.totp_enabled ? "success" : u.mfa_required ? "destructive" : "secondary"}>
+                  {u.totp_enabled ? "Ativo" : u.mfa_required ? "Pendente (obrigatório)" : "Desativado"}
+                </Badge>
+              </TableCell>
               <TableCell className="text-xs">{dateTime(u.created_at)}</TableCell>
               <TableCell className="space-x-1 whitespace-nowrap text-right">
                 {u.id !== me.id && (
                   <>
+                    {u.totp_enabled && (
+                      <Button size="sm" variant="outline" onClick={() => reset2fa(u)}>
+                        Redefinir 2FA
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => update(u.id, { role: u.role === "admin" ? "trader" : "admin" })}>
                       {u.role === "admin" ? "Remover admin" : "Tornar admin"}
                     </Button>
@@ -82,6 +105,74 @@ function UsersTab({ me }: { me: User }) {
       </Table>
       <Pager total={page.total} limit={LIMIT} offset={offset} onChange={go} />
     </>
+  );
+}
+
+function SecurityPolicyCard() {
+  const [policy, setPolicy] = useState<SecurityPolicy | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api
+      .adminSecurityPolicy()
+      .then(setPolicy)
+      .catch((e) => setError(errorMessage(e)));
+  }, []);
+
+  async function toggle() {
+    if (!policy) return;
+    const next = !policy.require_2fa_all;
+    if (next && !confirm("Exigir 2FA de TODOS os usuários? Quem ainda não cadastrou será levado à página Segurança e não poderá usar o painel até ativar."))
+      return;
+    setSaving(true);
+    setError(null);
+    try {
+      setPolicy(await api.adminUpdateSecurityPolicy(next));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Política de autenticação em dois fatores</CardTitle>
+        <CardDescription>
+          O 2FA (TOTP) é sempre obrigatório para super-admins e para quem pode operar contas live. Aqui você pode exigi-lo de
+          todos os usuários.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {error && <Alert variant="destructive">{error}</Alert>}
+        {policy ? (
+          <>
+            <ul className="space-y-1 text-sm text-muted-foreground">
+              <li>
+                Super-admins: <strong className="text-foreground">{policy.totp_required_for_admins ? "obrigatório" : "opcional"}</strong>
+              </li>
+              <li>
+                Operação live:{" "}
+                <strong className="text-foreground">
+                  {policy.totp_required_for_live ? "obrigatório" : "opcional"}
+                  {policy.live_trading_enabled ? "" : " (live desabilitado nesta instalação)"}
+                </strong>
+              </li>
+              <li>
+                Todos os usuários: <strong className="text-foreground">{policy.require_2fa_all ? "obrigatório" : "opcional"}</strong>
+              </li>
+            </ul>
+            <Button variant={policy.require_2fa_all ? "outline" : "default"} onClick={toggle} disabled={saving}>
+              {policy.require_2fa_all ? "Deixar de exigir 2FA de todos" : "Exigir 2FA de todos os usuários"}
+            </Button>
+          </>
+        ) : (
+          !error && <p className="text-sm text-muted-foreground">Carregando...</p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -187,7 +278,7 @@ export default function AdminPage() {
           </CardHeader>
           <CardContent className="flex flex-wrap items-center gap-2">
             {!ks.active && (
-              <Input className="w-72" placeholder="Motivo (opcional)" value={reason} onChange={(e) => setReason(e.target.value)} />
+              <Input className="w-72" aria-label="Motivo do kill switch (opcional)" placeholder="Motivo (opcional)" value={reason} onChange={(e) => setReason(e.target.value)} />
             )}
             <Button variant={ks.active ? "outline" : "destructive"} onClick={toggleKill}>
               {ks.active ? "Desativar kill switch" : "Ativar kill switch"}
@@ -195,6 +286,7 @@ export default function AdminPage() {
           </CardContent>
         </Card>
       )}
+      <SecurityPolicyCard />
       <Card>
         <CardContent className="pt-6">
           <Tabs defaultValue="users">

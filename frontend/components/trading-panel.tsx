@@ -18,6 +18,7 @@ import {
 import { Input, Select } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, errorMessage } from "@/lib/api";
+import { pct, pctLimit } from "@/lib/format";
 import type { Account, ManualOrderCreate } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -177,7 +178,7 @@ export function TradingPanel({
         <Button
           type="button"
           variant={side === "BUY" ? "default" : "outline"}
-          className={cn(side === "BUY" && "bg-green-600 hover:bg-green-600/90")}
+          className={cn(side === "BUY" && "bg-green-700 text-white hover:bg-green-700/90")}
           onClick={() => setSide("BUY")}
         >
           Comprar / Long
@@ -244,7 +245,7 @@ export function TradingPanel({
         <div className="flex justify-between">
           <span>Risco até o stop</span>
           <span>
-            {fmt(check.risk)} USDT ({fmt(check.riskPct)}% · limite {account.max_risk_per_trade_pct}%)
+            {fmt(check.risk)} USDT ({pct(check.riskPct)} · limite {pctLimit(account.max_risk_per_trade_pct)})
           </span>
         </div>
         <div className="flex justify-between">
@@ -290,7 +291,7 @@ export function TradingPanel({
               {tp ? ` · Take profit: ${tp}` : ""}
             </p>
             <p className="text-muted-foreground">
-              Risco estimado: {fmt(check.risk)} USDT ({fmt(check.riskPct)}% do patrimônio)
+              Risco estimado: {fmt(check.risk)} USDT ({pct(check.riskPct)} do patrimônio)
             </p>
             {isLive && (
               <Alert variant="destructive">Conta em modo REAL: esta ordem usa dinheiro de verdade.</Alert>

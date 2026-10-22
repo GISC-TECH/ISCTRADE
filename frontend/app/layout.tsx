@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Binance Trading Platform",
-  description: "Plataforma self-hosted de trading para Binance USDT-M Futures",
+  title: "ISCTRADE — trading de futuros",
+  description: "Plataforma auto-hospedada de trading automatizado de futuros USDT-M (Binance)",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

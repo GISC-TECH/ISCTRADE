@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { EmptyState, Pager } from "@/components/common";
 import { Alert } from "@/components/ui/alert";
@@ -14,31 +14,39 @@ export const LIMIT = 25;
 
 export function usePaged<T>(fetcher: (offset: number) => Promise<Page<T>>, deps: unknown[]) {
   const [page, setPage] = useState<Page<T> | null>(null);
-  const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Callers pass an inline fetcher plus primitive deps; the fetcher is read through a ref and the deps are
+  // serialized so the callback identity changes exactly when they do.
+  const fetcherRef = useRef(fetcher);
+  useEffect(() => {
+    fetcherRef.current = fetcher;
+  });
+  const depsKey = JSON.stringify(deps);
   const load = useCallback(
-    (o: number) => {
-      fetcher(o)
+    (o: number) =>
+      fetcherRef
+        .current(o)
         .then((p) => {
           setPage(p);
           setError(null);
         })
-        .catch((e) => setError(errorMessage(e)));
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    deps
+        .catch((e) => setError(errorMessage(e))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depsKey is the fetcher's version
+    [depsKey]
   );
+  // The offset belongs to the current fetcher (deps): when deps change it resets to 0 without an extra effect.
+  const [position, setPosition] = useState({ key: depsKey, offset: 0 });
+  const offset = position.key === depsKey ? position.offset : 0;
   useEffect(() => {
-    setOffset(0);
-    load(0);
+    void load(0);
   }, [load]);
   return {
     page,
     error,
     offset,
     go: (o: number) => {
-      setOffset(o);
-      load(o);
+      setPosition({ key: depsKey, offset: o });
+      void load(o);
     },
   };
 }

@@ -15,6 +15,24 @@ export function pct(v: string | number | null | undefined, digits = 2): string {
   return `${num(v).toLocaleString("pt-BR", { maximumFractionDigits: digits, minimumFractionDigits: digits })}%`;
 }
 
+/** Percentage for limits/settings stored as Decimal strings ("1.0000000000" -> "1%", "0.25" -> "0,25%"). */
+export function pctLimit(v: string | number | null | undefined, maxDigits = 4): string {
+  if (v === null || v === undefined || v === "") return "—";
+  return `${num(v).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: maxDigits })}%`;
+}
+
+/** Plain number in pt-BR without trailing zeros (Decimal strings from the API). */
+export function decimal(v: string | number | null | undefined, maxDigits = 8): string {
+  if (v === null || v === undefined || v === "") return "—";
+  return num(v).toLocaleString("pt-BR", { maximumFractionDigits: maxDigits });
+}
+
+export function dateOnly(v: string | null | undefined): string {
+  if (!v) return "—";
+  const [y, m, d] = v.slice(0, 10).split("-");
+  return `${d}/${m}/${y}`;
+}
+
 export function dateTime(v: string | number | null | undefined): string {
   if (v === null || v === undefined) return "—";
   const d = new Date(v);

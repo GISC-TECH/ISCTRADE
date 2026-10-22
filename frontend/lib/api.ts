@@ -21,17 +21,23 @@ import type {
   CloseAllResult,
   EconomicEvent,
   EquityPoint,
+  ExchangeInfo,
   ManualOrderCreate,
   ManualOrderResult,
+  MfaChallenge,
+  MfaSetup,
+  MfaStatus,
   Member,
   MonitoringStatus,
   NewsItem,
   NewsStatus,
   Order,
   Page,
+  PnlReport,
   PositionOut,
   Role,
   ScannerResponse,
+  SecurityPolicy,
   StrategyInfo,
   TokenResponse,
   Trade,
@@ -75,6 +81,10 @@ function qs(params?: Query): string {
 }
 
 let refreshing: Promise<boolean> | null = null;
+// 401 on these means "wrong credentials/expired step", not an expired access token.
+const NO_REFRESH_PATHS = ["/auth/login", "/auth/register", "/auth/refresh", "/auth/logout"];
+export const MFA_ENROLL_PATH = "/dashboard/security";
+export const MFA_REQUIRED_EVENT = "btp:mfa-required";
 
 export async function tryRefresh(): Promise<boolean> {
   if (!refreshing) {
@@ -95,7 +105,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   if (ws && !headers.has("X-Workspace-ID")) headers.set("X-Workspace-ID", ws);
 
   const res = await fetch(`${API_URL}${path}`, { ...init, headers, credentials: "include" });
-  if (res.status === 401 && retry && !path.startsWith("/auth/")) {
+  if (res.status === 401 && retry && !NO_REFRESH_PATHS.some((p) => path.startsWith(p))) {
     if (await tryRefresh()) return request<T>(path, init, false);
   }
   if (res.status === 404 && ws && retry && res.headers.get("content-type")?.includes("json")) {
@@ -105,6 +115,10 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
       setActiveWorkspace(null);
       return request<T>(path, init, false);
     }
+  }
+  if (res.status === 403 && res.headers.get("x-mfa-enrollment-required") && typeof window !== "undefined") {
+    // 2FA is mandatory for this user and not enrolled yet: AuthProvider routes them to Segurança.
+    window.dispatchEvent(new CustomEvent(MFA_REQUIRED_EVENT, { detail: res.headers.get("x-mfa-enrollment-required") }));
   }
   if (!res.ok) {
     let detail: unknown = res.statusText;
@@ -124,6 +138,29 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 
+/** Authenticated file download (CSV exports): fetch with cookies + workspace header, then save via a blob URL. */
+async function download(path: string, retry = true): Promise<void> {
+  const headers = new Headers();
+  const ws = getActiveWorkspace();
+  if (ws) headers.set("X-Workspace-ID", ws);
+  const res = await fetch(`${API_URL}${path}`, { headers, credentials: "include" });
+  if (res.status === 401 && retry && (await tryRefresh())) return download(path, false);
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiError(res.status, typeof body?.detail === "string" ? body.detail : "Falha ao exportar");
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "export.csv";
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 const patch = <T>(path: string, body: unknown) => request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
@@ -134,7 +171,15 @@ export const api = {
   // auth
   register: (email: string, password: string, full_name?: string) =>
     post<User>("/auth/register", { email, password, full_name }),
-  login: (email: string, password: string) => post<TokenResponse>("/auth/login", { email, password }),
+  login: (email: string, password: string) => post<TokenResponse | MfaChallenge>("/auth/login", { email, password }),
+  login2fa: (mfa_token: string, code: string) => post<TokenResponse>("/auth/login/2fa", { mfa_token, code }),
+  acceptDisclaimer: (version: string) => post<User>("/auth/me/disclaimer", { version }),
+  mfaStatus: () => request<MfaStatus>("/auth/2fa"),
+  mfaSetup: () => post<MfaSetup>("/auth/2fa/setup"),
+  mfaEnable: (code: string) => post<{ recovery_codes: string[] }>("/auth/2fa/enable", { code }),
+  mfaDisable: (password: string, code: string) => post<MfaStatus>("/auth/2fa/disable", { password, code }),
+  mfaRecoveryCodes: (password: string, code: string) =>
+    post<{ recovery_codes: string[] }>("/auth/2fa/recovery-codes", { password, code }),
   logout: () => post<void>("/auth/logout"),
   logoutAll: () => post<void>("/auth/logout-all"),
   me: () => request<User>("/auth/me"),
@@ -156,6 +201,7 @@ export const api = {
 
   // accounts
   listAccounts: () => request<Account[]>("/accounts/"),
+  listExchanges: () => request<ExchangeInfo[]>("/accounts/exchanges"),
   connectAccount: (data: AccountCreate) => post<Account>("/accounts/", data),
   updateAccount: (id: string, data: Partial<AccountCreate>) => patch<Account>(`/accounts/${id}`, data),
   deleteAccount: (id: string) => del(`/accounts/${id}`),
@@ -200,8 +246,13 @@ export const api = {
   orders: (params?: Query) => request<Page<Order>>(`/history/orders${qs(params)}`),
   trades: (params?: Query) => request<Page<Trade>>(`/history/trades${qs(params)}`),
   equity: (params?: Query) => request<EquityPoint[]>(`/history/equity${qs(params)}`),
-  positions: (params?: Query) => request<(PositionOut & { account_id: string })[]>(`/history/positions${qs(params)}`),
+  positions: (params?: Query) =>
+    request<(PositionOut & { account_id: string; is_paper?: boolean; updated_at?: string })[]>(
+      `/history/positions${qs(params)}`
+    ),
   audit: (params?: Query) => request<Page<AuditEntry>>(`/history/audit${qs(params)}`),
+  pnl: (params?: Query) => request<PnlReport>(`/history/pnl${qs(params)}`),
+  downloadCsv: (kind: "trades" | "income", params?: Query) => download(`/history/export/${kind}.csv${qs(params)}`),
 
   // scanner
   scanner: (params?: Query) => request<ScannerResponse>(`/scanner/${qs(params)}`),
@@ -244,6 +295,10 @@ export const api = {
   adminKillSwitch: (active: boolean, reason?: string) =>
     post<{ active: boolean; reason?: string }>("/admin/kill-switch", { active, reason }),
   adminAudit: (params?: Query) => request<Page<AuditEntry>>(`/admin/audit${qs(params)}`),
+  adminSecurityPolicy: () => request<SecurityPolicy>("/admin/security-policy"),
+  adminUpdateSecurityPolicy: (require_2fa_all: boolean) =>
+    put<SecurityPolicy>("/admin/security-policy", { require_2fa_all }),
+  adminReset2fa: (id: string) => post<User>(`/admin/users/${id}/reset-2fa`),
 };
 
 export function errorMessage(err: unknown): string {

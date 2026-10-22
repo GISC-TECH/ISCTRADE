@@ -11,6 +11,82 @@ export interface User {
   is_active: boolean;
   active_workspace_id: string | null;
   created_at: string;
+  totp_enabled?: boolean;
+  mfa_required?: boolean;
+  mfa_reason?: "policy" | "live" | "admin" | null;
+  disclaimer_version?: string | null;
+  disclaimer_pending?: boolean;
+}
+
+export interface MfaChallenge {
+  mfa_required: true;
+  mfa_token: string;
+  expires_in: number;
+}
+
+export interface MfaStatus {
+  enabled: boolean;
+  pending: boolean;
+  enabled_at: string | null;
+  recovery_codes_remaining: number;
+  required: boolean;
+  required_reason: "policy" | "live" | "admin" | null;
+  live_requires_2fa: boolean;
+}
+
+export interface MfaSetup {
+  secret: string;
+  otpauth_uri: string;
+  qr_svg: string;
+}
+
+export interface SecurityPolicy {
+  require_2fa_all: boolean;
+  totp_required_for_live: boolean;
+  totp_required_for_admins: boolean;
+  live_trading_enabled: boolean;
+}
+
+export interface ExchangeInfo {
+  id: string;
+  name: string;
+  experimental: boolean;
+  testnet: boolean;
+  user_data_stream: boolean;
+  market_streams: boolean;
+  notes: string[];
+}
+
+export type PnlPeriod = "day" | "week" | "month";
+export type PnlGroupBy = "none" | "account" | "bot" | "strategy" | "symbol";
+
+export interface PnlTotals {
+  realized_pnl: string;
+  fees: string;
+  net_pnl: string;
+  trades: number;
+  fees_other: Record<string, string>;
+}
+
+export interface PnlBucket extends PnlTotals {
+  period_start: string;
+  group: string;
+  label: string;
+}
+
+export interface PnlGroup extends PnlTotals {
+  group: string;
+  label: string;
+}
+
+export interface PnlReport {
+  period: PnlPeriod;
+  group_by: PnlGroupBy;
+  start: string;
+  end: string;
+  buckets: PnlBucket[];
+  groups: PnlGroup[];
+  totals: PnlTotals;
 }
 
 export interface TokenResponse {
@@ -41,6 +117,7 @@ export interface Account {
   id: string;
   workspace_id: string;
   label: string;
+  exchange?: string;
   api_key_last4: string;
   is_testnet: boolean;
   execution_mode: ExecutionMode;
@@ -58,6 +135,7 @@ export interface Account {
 
 export interface AccountCreate {
   label: string;
+  exchange?: string;
   api_key: string;
   api_secret: string;
   is_testnet: boolean;

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/auth-provider";
@@ -21,11 +22,12 @@ import { Input, Select } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage } from "@/lib/api";
-import { dateTime, usd } from "@/lib/format";
-import type { Account, AccountCreate } from "@/lib/types";
+import { dateTime, pctLimit, usd } from "@/lib/format";
+import type { Account, AccountCreate, ExchangeInfo } from "@/lib/types";
 
 const EMPTY: AccountCreate = {
   label: "",
+  exchange: "binance_usdm",
   api_key: "",
   api_secret: "",
   is_testnet: true,
@@ -37,11 +39,34 @@ const EMPTY: AccountCreate = {
   max_drawdown_pct: 10,
 };
 
-function ConnectDialog({ onCreated }: { onCreated: () => void }) {
+const EXCHANGE_LABELS: Record<string, string> = { binance_usdm: "Binance", bybit: "Bybit" };
+
+function ConnectDialog({ onCreated, totpEnabled }: { onCreated: () => void; totpEnabled: boolean }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<AccountCreate>(EMPTY);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [exchanges, setExchanges] = useState<ExchangeInfo[] | null>(null);
+  const exchange = exchanges?.find((x) => x.id === form.exchange) ?? null;
+
+  // Exchanges come from the API (experimental adapters only when EXPERIMENTAL_EXCHANGES_ENABLED on the server).
+  function onOpenChange(next: boolean) {
+    setOpen(next);
+    if (next && exchanges === null) {
+      api
+        .listExchanges()
+        .then((list) => {
+          setExchanges(list);
+          if (list.length && !list.some((x) => x.id === form.exchange)) set("exchange", list[0].id);
+        })
+        .catch((e) => setError(errorMessage(e)));
+    }
+  }
+
+  function selectExchange(id: string) {
+    const info = exchanges?.find((x) => x.id === id);
+    setForm((f) => ({ ...f, exchange: id, is_testnet: info && !info.testnet ? false : f.is_testnet }));
+  }
 
   const set = <K extends keyof AccountCreate>(k: K, v: AccountCreate[K]) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -75,19 +100,50 @@ function ConnectDialog({ onCreated }: { onCreated: () => void }) {
   );
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
         <Button>Conectar conta</Button>
       </DialogTrigger>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Conectar conta Binance Futures</DialogTitle>
+          <DialogTitle>Conectar conta de futuros</DialogTitle>
           <DialogDescription>
             As chaves são criptografadas (AES-256-GCM) antes de serem salvas e nunca são exibidas novamente. Use chaves
             sem permissão de saque.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="exchange">Corretora</Label>
+            <Select
+              id="exchange"
+              value={form.exchange}
+              disabled={!exchanges}
+              onChange={(e) => selectExchange(e.target.value)}
+              aria-describedby="exchange-notes"
+            >
+              {(exchanges ?? [{ id: "binance_usdm", name: "Binance USDT-M Futures", experimental: false } as ExchangeInfo]).map(
+                (x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name}
+                    {x.experimental ? " (experimental)" : ""}
+                  </option>
+                )
+              )}
+            </Select>
+            {exchange && (exchange.experimental || exchange.notes.length > 0) && (
+              <div id="exchange-notes" className="space-y-1 text-xs text-muted-foreground">
+                {exchange.experimental && (
+                  <p className="font-medium text-yellow-500">
+                    Adaptador experimental: use apenas em paper/testnet até validar.
+                  </p>
+                )}
+                {exchange.notes.map((n) => (
+                  <p key={n}>{n}</p>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="space-y-1">
             <Label htmlFor="label">Nome</Label>
             <Input id="label" required value={form.label} onChange={(e) => set("label", e.target.value)} />
@@ -128,7 +184,9 @@ function ConnectDialog({ onCreated }: { onCreated: () => void }) {
             <div className="space-y-1">
               <Label htmlFor="net">Rede</Label>
               <Select id="net" value={form.is_testnet ? "1" : "0"} onChange={(e) => set("is_testnet", e.target.value === "1")}>
-                <option value="1">Testnet</option>
+                <option value="1" disabled={exchange ? !exchange.testnet : false}>
+                  Testnet
+                </option>
                 <option value="0">Mainnet</option>
               </Select>
             </div>
@@ -140,8 +198,13 @@ function ConnectDialog({ onCreated }: { onCreated: () => void }) {
           </div>
           {form.execution_mode === "live" && (
             <Alert variant="warning">
-              Modo real só envia ordens se o servidor tiver <code>LIVE_TRADING_ENABLED=true</code>. Caso contrário a
-              conta opera em paper.
+              Modo real só envia ordens se o servidor tiver <code>LIVE_TRADING_ENABLED=true</code>; caso contrário, o
+              início da conta é recusado. Contas reais exigem 2FA ativo.{" "}
+              {!totpEnabled && (
+                <Link href="/dashboard/security" className="underline">
+                  Ativar 2FA agora
+                </Link>
+              )}
             </Alert>
           )}
           {error && <Alert variant="destructive">{error}</Alert>}
@@ -157,7 +220,7 @@ function ConnectDialog({ onCreated }: { onCreated: () => void }) {
 }
 
 export default function AccountsPage() {
-  const { workspace } = useAuth();
+  const { workspace, user } = useAuth();
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -199,8 +262,8 @@ export default function AccountsPage() {
 
   return (
     <div>
-      <PageHeader title="Contas" description="Contas Binance USDT-M Futures conectadas a este workspace.">
-        {canTrade && <ConnectDialog onCreated={load} />}
+      <PageHeader title="Contas" description="Contas de futuros (USDT-M) conectadas a este workspace.">
+        {canTrade && <ConnectDialog onCreated={load} totpEnabled={!!user?.totp_enabled} />}
       </PageHeader>
       {error && <Alert variant="destructive" className="mb-4">{error}</Alert>}
       {notice && <Alert variant="success" className="mb-4">{notice}</Alert>}
@@ -228,7 +291,9 @@ export default function AccountsPage() {
                   <TableRow key={a.id}>
                     <TableCell>
                       <div className="font-medium">{a.label}</div>
-                      <div className="text-xs text-muted-foreground">••••{a.api_key_last4}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {EXCHANGE_LABELS[a.exchange ?? "binance_usdm"] ?? a.exchange} · ••••{a.api_key_last4}
+                      </div>
                     </TableCell>
                     <TableCell className="space-x-1">
                       <Badge variant={a.execution_mode === "live" ? "destructive" : "secondary"}>
@@ -241,8 +306,8 @@ export default function AccountsPage() {
                       {a.status_reason && <div className="mt-1 text-xs text-muted-foreground">{a.status_reason}</div>}
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {a.max_leverage}x · risco {a.max_risk_per_trade_pct}% · diária {a.max_daily_loss_pct}% · DD{" "}
-                      {a.max_drawdown_pct}%
+                      {a.max_leverage}x · risco {pctLimit(a.max_risk_per_trade_pct)} · diária {pctLimit(a.max_daily_loss_pct)} · DD{" "}
+                      {pctLimit(a.max_drawdown_pct)}
                     </TableCell>
                     <TableCell>{usd(a.last_equity ?? (a.execution_mode === "paper" ? a.paper_balance : null))}</TableCell>
                     <TableCell className="text-xs">{dateTime(a.created_at)}</TableCell>

@@ -40,7 +40,7 @@ function CreateBotDialog({
   onCreated: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
+  const [chosenAccountId, setAccountId] = useState(accounts[0]?.id ?? "");
   const [name, setName] = useState("");
   const [strategyKey, setStrategyKey] = useState(strategies[0]?.key ?? "");
   const [symbol, setSymbol] = useState("BTCUSDT");
@@ -57,9 +57,10 @@ function CreateBotDialog({
     [accounts, presetKey]
   );
 
-  useEffect(() => {
-    if (!accountOptions.some((a) => a.id === accountId)) setAccountId(accountOptions[0]?.id ?? "");
-  }, [accountOptions, accountId]);
+  // Fall back to the first allowed account when the choice is no longer offered (e.g. a preset hides live ones).
+  const accountId = accountOptions.some((a) => a.id === chosenAccountId)
+    ? chosenAccountId
+    : (accountOptions[0]?.id ?? "");
 
   function selectStrategy(key: string) {
     setStrategyKey(key);

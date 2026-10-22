@@ -33,7 +33,7 @@ import { Input, Select } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage } from "@/lib/api";
-import { dateTime, num, pnlClass, qty, usd } from "@/lib/format";
+import { dateTime, num, pct, pnlClass, qty, usd } from "@/lib/format";
 import type { RealtimeMessage } from "@/lib/realtime";
 import type { Account, AccountDashboard, Bot, Order, PositionOut, Trade } from "@/lib/types";
 
@@ -110,7 +110,7 @@ function LiveQuote({ symbol }: { symbol: string }) {
       <div className="font-semibold">{formatPrice(ticker?.c ?? null)}</div>
       <div className="text-xs text-muted-foreground">
         mark {formatPrice(mark?.p ?? null)} · funding{" "}
-        {mark?.r != null ? `${(mark.r * 100).toFixed(4)}%` : "—"}
+        {mark?.r != null ? pct(mark.r * 100, 4) : "—"}
       </div>
     </div>
   );
@@ -313,29 +313,29 @@ export default function LivePage() {
       .catch(() => undefined);
   }, []);
 
-  const load = useCallback(async () => {
-    if (!accountId) return;
-    try {
-      const [d, pos, ord, tr, b, accs, st] = await Promise.all([
-        api.accountDashboard(accountId),
-        api.positions({ account_id: accountId }),
-        api.orders({ account_id: accountId, limit: 30 }),
-        api.trades({ account_id: accountId, symbol, limit: 200 }),
-        api.listBots(accountId),
-        api.listAccounts(),
-        api.tradingStatus(),
-      ]);
-      setDash(d);
-      setPositions(pos.filter((p) => num(p.quantity) !== 0));
-      setOrders(ord.items);
-      setTrades(tr.items);
-      setBots(b);
-      setAccounts(accs);
-      setGlobalKill(st.global_kill_switch);
-      setError(null);
-    } catch (e) {
-      setError(errorMessage(e));
-    }
+  // Promise chain: state is only set from async callbacks (no synchronous setState inside the effect).
+  const load = useCallback(() => {
+    if (!accountId) return Promise.resolve();
+    return Promise.all([
+      api.accountDashboard(accountId),
+      api.positions({ account_id: accountId }),
+      api.orders({ account_id: accountId, limit: 30 }),
+      api.trades({ account_id: accountId, symbol, limit: 200 }),
+      api.listBots(accountId),
+      api.listAccounts(),
+      api.tradingStatus(),
+    ])
+      .then(([d, pos, ord, tr, b, accs, st]) => {
+        setDash(d);
+        setPositions(pos.filter((p) => num(p.quantity) !== 0));
+        setOrders(ord.items);
+        setTrades(tr.items);
+        setBots(b);
+        setAccounts(accs);
+        setGlobalKill(st.global_kill_switch);
+        setError(null);
+      })
+      .catch((e) => setError(errorMessage(e)));
   }, [accountId, symbol]);
 
   useEffect(() => {
@@ -437,7 +437,7 @@ export default function LivePage() {
         title="Tempo real & Trading"
         description="Cotações, candles e posições ao vivo. Toda ordem manual passa pelo gerenciador de risco."
       >
-        <Select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="h-9 w-56">
+        <Select aria-label="Conta" value={accountId} onChange={(e) => setAccountId(e.target.value)} className="h-9 w-56">
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
               {a.label} · {a.execution_mode === "live" ? "REAL" : "paper"}
