@@ -24,7 +24,8 @@ nada quebrado chegue ao `deploy.sh` (que faz `git pull`).
 | Job | Passos |
 |---|---|
 | `backend` | `ruff check`, `ruff format --check`, `pytest` (inclui teste de migração em PostgreSQL 15 de serviço), `pip-audit -r requirements.txt` |
-| `frontend` | `npm ci`, `eslint`, `tsc --noEmit`, `next build`, `npm audit --omit=dev --audit-level=critical` (subir para `high` após a migração para Tailwind 4 — GAPS G-25) |
+| `frontend` | `npm ci`, `eslint`, `tsc --noEmit`, `npm test` (Vitest + Testing Library em `frontend/tests/unit`), `next build`, `npm audit --omit=dev --audit-level=critical` (subir para `high` após a migração para Tailwind 4 — GAPS G-25) |
+| `e2e` | PostgreSQL + Redis de serviço, `alembic upgrade head`, uvicorn em segundo plano, `next build` + `next start` e Playwright (`frontend/e2e/smoke.spec.ts`: cadastro com login automático → aceite do aviso → ativação do 2FA → login em duas etapas → dashboard → conta paper → Tempo real; e a página 404), em desktop e mobile. Relatório HTML como artefato em caso de falha |
 | `compose` | `docker compose config` (dev, prod e prod com perfis `monitoring` + `backup`), `shellcheck scripts/*.sh infra/backup/*.sh` |
 | `monitoring` | `promtool check rules` + `promtool test rules` (testes em `infra/monitoring/tests/`), `amtool check-config` |
 | `images` | build das imagens `backend`, `frontend` e `backup` + *smoke test* de import (`app.main`, celery, beat, streams, `alembic heads`, `app.healthcheck`) |
