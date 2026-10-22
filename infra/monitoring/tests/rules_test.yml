@@ -1,0 +1,88 @@
+# Testes unitários das regras: promtool test rules /m/tests/rules_test.yml (ver docs/ci/ci.yml, job "monitoring").
+rule_files:
+  - ../rules/isctrade.yml
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'up{job="backend", instance="backend:8000"}'
+        values: "1 1 0 0 0 0 0 0 0 0"
+      - series: "btp_beat_heartbeat_age_seconds"
+        values: "5 10 200 230 260 290 320 350 380 410"
+      - series: 'btp_ws_last_message_age_seconds{stream="market-mainnet", kind="market"}'
+        values: "1 1 130 160 190 220 250 280 310 340"
+      - series: 'btp_bots{state="running"}'
+        values: "2x10"
+      - series: "btp_bot_last_tick_age_seconds"
+        values: "10 400 430 460 490 520 550 580 610 640"
+      - series: 'btp_binance_used_weight_1m{host="fapi.binance.com"}'
+        values: "100 2000 2100 2100 2100 2100 2100 2100 2100 2100"
+      - series: "btp_global_kill_switch"
+        values: "0 1 1 1 1 1 1 1 1 1"
+      - series: 'btp_positions_unprotected{account_id="a1"}'
+        values: "0 0 1 1 1 1 1 1 1 1"
+      - series: 'btp_binance_rate_limited_total{host="fapi.binance.com", status="418"}'
+        values: "0 0 1 1 1 1 1 1 1 1"
+      - series: 'node_filesystem_avail_bytes{mountpoint="/", fstype="ext4"}'
+        values: "4x40"
+      - series: 'node_filesystem_size_bytes{mountpoint="/", fstype="ext4"}'
+        values: "100x40"
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ServiceDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: backend, instance: "backend:8000"}
+            exp_annotations:
+              summary: "Serviço backend (backend:8000) fora do ar"
+              description: "O Prometheus não consegue coletar métricas de backend:8000 há 2 min."
+              runbook: "docs/RUNBOOK.md#servico-fora-do-ar"
+      - eval_time: 4m
+        alertname: StaleMarketData
+        exp_alerts:
+          - exp_labels: {severity: critical, stream: market-mainnet, kind: market}
+            exp_annotations:
+              summary: "Dados de mercado parados: market-mainnet sem mensagens há 5m 10s"
+              description: "O mark price é enviado a cada 1 s; silêncio indica conexão caída/bloqueada ou DNS."
+              runbook: "docs/RUNBOOK.md#dados-de-mercado-parados"
+      - eval_time: 1m
+        alertname: StaleMarketData
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: NoBotTicks
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Bots ativos sem tick há mais de 5 min"
+              description: "Há bots em execução mas nenhum tick foi concluído (worker trading, beat, Redis ou exchange)."
+              runbook: "docs/RUNBOOK.md#bots-sem-tick"
+      - eval_time: 2m
+        alertname: BinanceWeightHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, host: fapi.binance.com}
+            exp_annotations:
+              summary: "Peso de requisições Binance alto em fapi.binance.com: 2100/2400 por minuto"
+              description: "Acima de 2400/min a Binance responde 429 e, se insistir, bane o IP (418)."
+              runbook: "docs/RUNBOOK.md#limite-de-peso-ou-ban-da-binance"
+      - eval_time: 2m
+        alertname: GlobalKillSwitchActive
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Kill switch GLOBAL ativo — nenhuma ordem nova será enviada"
+              runbook: "docs/RUNBOOK.md#kill-switch-acionado"
+      - eval_time: 3m
+        alertname: UnprotectedPosition
+        exp_alerts:
+          - exp_labels: {severity: critical, account_id: a1}
+            exp_annotations:
+              summary: "Posição SEM STOP na corretora (conta a1)"
+              description: "Verifique a ordem STOP_MARKET na Binance imediatamente; recoloque o stop ou feche a posição."
+              runbook: "docs/RUNBOOK.md#posicao-sem-stop"
+      - eval_time: 6m
+        alertname: DiskSpaceCritical
+        exp_alerts:
+          - exp_labels: {severity: critical, mountpoint: /, fstype: ext4}
+            exp_annotations:
+              summary: "Disco / quase cheio (4% livre)"
+              description: "PostgreSQL/Redis param de gravar com disco cheio."
+              runbook: "docs/RUNBOOK.md#disco-cheio"

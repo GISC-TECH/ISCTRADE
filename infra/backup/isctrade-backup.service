@@ -1,0 +1,16 @@
+# systemd (alternativa ao serviço "backup" do compose). Instale:
+#   sudo cp infra/backup/isctrade-backup.{service,timer} /etc/systemd/system/
+#   sudo sed -i "s#/opt/isctrade#$(pwd)#" /etc/systemd/system/isctrade-backup.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now isctrade-backup.timer
+[Unit]
+Description=ISCTRADE - backup criptografado do PostgreSQL
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/isctrade
+ExecStart=/opt/isctrade/scripts/backup_db.sh
+# usuário com acesso ao docker (grupo docker) e dono do diretório do repositório
+User=deploy
+Nice=10

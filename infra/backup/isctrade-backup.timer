@@ -1,0 +1,10 @@
+[Unit]
+Description=ISCTRADE - backup diário do PostgreSQL (03:00 UTC)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

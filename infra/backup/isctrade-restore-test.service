@@ -1,0 +1,12 @@
+# Teste mensal de restauração (restaura o último backup num banco temporário e confere). Requer
+# BACKUP_AGE_IDENTITY_FILE acessível no host durante o teste — veja docs/RUNBOOK.md §Teste de restauração.
+[Unit]
+Description=ISCTRADE - teste de restauração do último backup
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/isctrade
+ExecStart=/opt/isctrade/scripts/restore_db.sh --verify
+User=deploy

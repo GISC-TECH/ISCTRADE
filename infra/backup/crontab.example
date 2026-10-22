@@ -1,0 +1,4 @@
+# Alternativa ao systemd/compose: crontab -e (usuário com acesso ao docker). Ajuste o caminho do repositório.
+# Backup diário 03:00 UTC (servidor em UTC) e teste de restauração no dia 1 de cada mês.
+0 3 * * *  cd /opt/isctrade && ./scripts/backup_db.sh >> backups/backup.log 2>&1
+0 4 1 * *  cd /opt/isctrade && ./scripts/restore_db.sh --verify >> backups/restore-test.log 2>&1

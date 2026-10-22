@@ -7,13 +7,16 @@
 #   ./scripts/deploy.sh --skip-backup
 #   ./scripts/deploy.sh rollback   # volta ao commit do deploy anterior (ver .deploy/previous_ref)
 #
-# Variáveis opcionais: HEALTH_TIMEOUT (segundos, padrão 180), COMPOSE (comando compose customizado).
+# Variáveis opcionais: HEALTH_TIMEOUT (segundos, padrão 180), COMPOSE (comando compose customizado),
+# DOCKER (padrão "docker"; ex. DOCKER="sudo docker" COMPOSE="sudo docker compose -f ... -f ...").
+# Perfis opcionais via .env/ambiente: COMPOSE_PROFILES=monitoring,backup (Prometheus/Alertmanager, backup agendado).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 STATE_DIR="$ROOT/.deploy"
-COMPOSE="${COMPOSE:-docker compose -f docker-compose.yml -f docker-compose.prod.yml}"
+DOCKER="${DOCKER:-docker}"
+COMPOSE="${COMPOSE:-$DOCKER compose -f docker-compose.yml -f docker-compose.prod.yml}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-180}"
 PULL=1
 BACKUP=1
@@ -24,7 +27,7 @@ for arg in "$@"; do
     --no-pull) PULL=0 ;;
     --skip-backup) BACKUP=0 ;;
     rollback) ACTION="rollback" ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "Argumento desconhecido: $arg" >&2; exit 2 ;;
   esac
 done
@@ -36,8 +39,48 @@ env_value() { # lê KEY=valor do .env sem executar o arquivo
   grep -E "^$1=" .env | tail -n1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' || true
 }
 
+https_origin() { # origem pública esperada pelo navegador (porta só quando != 443)
+  local domain port
+  domain="$(env_value DOMAIN)"
+  port="$(env_value HTTPS_PORT)"
+  if [[ -z "$port" || "$port" == "443" ]]; then echo "https://$domain"; else echo "https://$domain:$port"; fi
+}
+
+check_cors() {
+  local origin cors
+  origin="$(https_origin)"
+  cors="$(env_value CORS_ORIGINS | tr -d ' []"')"
+  # CORS_ORIGINS também valida o Origin do WebSocket do painel: sem o domínio, o tempo real recebe 403.
+  if [[ ",$cors," != *",$origin,"* ]]; then
+    die "CORS_ORIGINS deve conter $origin (atual: ${cors:-vazio}). Sem isso o painel em tempo real fica em \"Reconectando…\"."
+  fi
+}
+
+check_monitoring() {
+  local profiles
+  profiles="${COMPOSE_PROFILES:-$(env_value COMPOSE_PROFILES)}"
+  [[ ",$profiles," == *",monitoring,"* ]] || return 0
+  local gpw
+  gpw="$(env_value GRAFANA_ADMIN_PASSWORD)"
+  [[ -n "$gpw" && "$gpw" != "admin" ]] || die "perfil monitoring ativo: defina GRAFANA_ADMIN_PASSWORD forte no .env."
+  local token
+  token="$(env_value ALERTMANAGER_WEBHOOK_TOKEN)"
+  mkdir -p infra/monitoring/secrets
+  # O Alertmanager roda como "nobody" no container: diretório só atravessável (711) e arquivos 644.
+  chmod 711 infra/monitoring/secrets
+  if [[ -n "$token" ]]; then # mantém o segredo do Alertmanager igual ao do backend (arquivo ignorado pelo git)
+    printf '%s' "$token" > infra/monitoring/secrets/webhook_token
+  else
+    echo "Aviso: ALERTMANAGER_WEBHOOK_TOKEN vazio — alertas do Prometheus não chegarão ao WhatsApp." >&2
+  fi
+  chmod 644 infra/monitoring/secrets/* 2>/dev/null || true
+  for f in external_url deadman_url; do
+    [[ -s "infra/monitoring/secrets/$f" ]] || echo "Aviso: infra/monitoring/secrets/$f ausente (veja infra/monitoring/README.md)." >&2
+  done
+}
+
 preflight() {
-  command -v docker >/dev/null || die "docker não encontrado."
+  command -v "${DOCKER%% *}" >/dev/null || die "docker não encontrado."
   $COMPOSE version >/dev/null 2>&1 || die "docker compose v2 não encontrado."
   [[ -f .env ]] || die "arquivo .env não encontrado. Copie .env.example e preencha os valores."
   if grep -Ev '^[[:space:]]*#' .env | grep -q "CHANGE_ME"; then die ".env ainda contém valores CHANGE_ME."; fi
@@ -54,6 +97,11 @@ preflight() {
   else
     echo "Modo de execução: paper (LIVE_TRADING_ENABLED != true). Nenhuma ordem real será enviada."
   fi
+  check_cors
+  check_monitoring
+  if [[ -z "$(env_value BACKUP_AGE_RECIPIENTS)" && -z "$(env_value BACKUP_GPG_RECIPIENT)" ]]; then
+    echo "Aviso: backups sem criptografia (defina BACKUP_AGE_RECIPIENTS; docs/RUNBOOK.md §Backups)." >&2
+  fi
   $COMPOSE config -q || die "docker compose config inválido."
 }
 
@@ -62,6 +110,8 @@ backup() {
   if $COMPOSE ps --status running --services 2>/dev/null | grep -qx postgres; then
     log "Backup do PostgreSQL antes das migrações"
     COMPOSE="$COMPOSE" ./scripts/backup_db.sh
+    # shellcheck disable=SC2010,SC2012
+    ls -1t backups/db_*.sql.gz* 2>/dev/null | grep -v '\.sha256$' | head -n1 > "$STATE_DIR/pre_deploy_backup" || true
   else
     echo "PostgreSQL não está em execução (primeiro deploy?) — backup ignorado."
   fi
@@ -69,14 +119,14 @@ backup() {
 
 wait_healthy() {
   local deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
-  local services=(backend frontend celery_worker celery_worker_trading)
+  local services=(postgres redis backend frontend celery_worker celery_worker_trading celery_beat streams caddy)
   log "Aguardando health checks (${HEALTH_TIMEOUT}s): ${services[*]}"
   while :; do
     local pending=()
     for svc in "${services[@]}"; do
       local cid status
       cid="$($COMPOSE ps -q "$svc" 2>/dev/null || true)"
-      status="$( [[ -n "$cid" ]] && docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || echo missing)"
+      status="$( [[ -n "$cid" ]] && $DOCKER inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || echo missing)"
       [[ "$status" == "healthy" ]] || pending+=("$svc=$status")
     done
     if [[ ${#pending[@]} -eq 0 ]]; then echo "Todos os serviços saudáveis."; return 0; fi
@@ -89,13 +139,21 @@ wait_healthy() {
 }
 
 smoke_test() {
-  local domain
+  local domain port body
   domain="$(env_value DOMAIN)"
-  log "Smoke test via Caddy (https://${domain}/health)"
-  if curl -fsS --max-time 10 -k --resolve "${domain}:443:127.0.0.1" "https://${domain}/health" >/dev/null; then
-    echo "OK"
+  port="$(env_value HTTPS_PORT)"
+  port="${port:-443}"
+  log "Smoke test via Caddy (https://${domain}:${port}/health/ready)"
+  if body="$(curl -sS --max-time 10 -k --resolve "${domain}:${port}:127.0.0.1" "https://${domain}:${port}/health/ready")"; then
+    local status
+    status="$(printf '%s' "$body" | sed -n 's/.*"status":"\([a-z_]*\)".*/\1/p' | head -n1)"
+    case "$status" in
+      ready) echo "OK (ready)" ;;
+      degraded) echo "Aviso: /health/ready = degraded (beat/worker/WebSocket/ticks). Detalhes: $body" >&2 ;;
+      *) echo "Aviso: /health/ready = ${status:-?}: $body" >&2 ;;
+    esac
   else
-    echo "Aviso: /health via Caddy falhou (DNS/certificado ainda propagando?). Verifique: $COMPOSE logs caddy" >&2
+    echo "Aviso: /health/ready via Caddy falhou (DNS/certificado ainda propagando?). Verifique: $COMPOSE logs caddy" >&2
   fi
 }
 
@@ -128,7 +186,7 @@ deploy() {
 
   if ! wait_healthy; then
     $COMPOSE ps
-    $COMPOSE logs --tail=80 backend celery_worker celery_worker_trading frontend || true
+    $COMPOSE logs --tail=80 backend celery_worker celery_worker_trading celery_beat streams frontend || true
     die "deploy não ficou saudável. Para voltar: ./scripts/deploy.sh rollback (restaure o backup se houve migração)."
   fi
   smoke_test
@@ -144,7 +202,12 @@ rollback() {
   local ref
   ref="$(cat "$STATE_DIR/previous_ref")"
   printf '\033[1;33mATENÇÃO:\033[0m o rollback NÃO desfaz migrações do banco. Se a versão nova alterou o schema,\n'
-  echo "restaure o backup correspondente em ./backups antes de prosseguir."
+  echo "restaure o backup feito antes do deploy:"
+  if [[ -s "$STATE_DIR/pre_deploy_backup" ]]; then
+    echo "  ./scripts/restore_db.sh --replace $(cat "$STATE_DIR/pre_deploy_backup")"
+  else
+    echo "  (nenhum backup pré-deploy registrado; veja ./backups e docs/RUNBOOK.md §Restauração)"
+  fi
   read -r -p "Voltar para $ref? [s/N] " ok
   [[ "$ok" =~ ^[sS]$ ]] || exit 1
   git checkout --detach "$ref"

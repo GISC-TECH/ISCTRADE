@@ -2,14 +2,24 @@
 # Produção: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d` (ou scripts/deploy.sh).
 name: binance-trading-platform
 
+# Rotação de logs do Docker para TODOS os serviços (json-file sem limite enche o disco). Ajuste no .env:
+# LOG_MAX_SIZE (padrão 10m) e LOG_MAX_FILE (padrão 5) => no máximo ~50 MB por container.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-10m}
+    max-file: "${LOG_MAX_FILE:-5}"
+
 x-backend-common: &backend-common
   build:
     context: ./backend
-  image: btp-backend:latest
+  image: ${STACK_NAME:-btp}-backend:latest
   env_file: .env
   networks:
     - backend
   restart: unless-stopped
+  logging: *logging
+  mem_limit: ${APP_MEM_LIMIT:-1g}
 
 x-after-migrate: &after-migrate
   postgres:
@@ -23,8 +33,8 @@ services:
   caddy:
     image: caddy:2-alpine
     ports:
-      - "80:80"
-      - "443:443"
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
     environment:
       DOMAIN: ${DOMAIN:-localhost}
       ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
@@ -41,6 +51,14 @@ services:
       - frontend
       - backend
     restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      # API de administração do Caddy (somente localhost dentro do container)
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
   frontend:
     build:
@@ -49,13 +67,15 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
         BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-}
-    image: btp-frontend:latest
+    image: ${STACK_NAME:-btp}-frontend:latest
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
     networks:
       - frontend
       - backend
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${APP_MEM_LIMIT:-1g}
 
   # Executa as migrações Alembic uma única vez antes de API/workers subirem.
   migrate:
@@ -72,7 +92,7 @@ services:
     volumes:
       - ./backend:/app
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     depends_on: *after-migrate
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
@@ -128,16 +148,20 @@ services:
   # Mantenha exatamente UMA instância.
   celery_beat:
     <<: *backend-common
-    command: celery -A app.tasks.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
+    # HeartbeatScheduler: grava /tmp/beat-heartbeat (healthcheck abaixo) e heartbeat:beat no Redis (/health/ready).
+    command: >-
+      celery -A app.tasks.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
+      -S app.tasks.beat:HeartbeatScheduler
     environment:
       DB_USE_NULLPOOL: "true"
     volumes:
       - ./backend:/app
     depends_on: *after-migrate
+    mem_limit: ${BEAT_MEM_LIMIT:-512m}
     healthcheck:
-      test: ["CMD-SHELL", "test -f /tmp/celerybeat-schedule || test -f /tmp/celerybeat-schedule.db"]
+      test: ["CMD", "python", "-m", "app.healthcheck", "file", "/tmp/beat-heartbeat", "60"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       start_period: 30s
       retries: 3
 
@@ -150,6 +174,14 @@ services:
     volumes:
       - ./backend:/app
     depends_on: *after-migrate
+    # O loop de heartbeat (15 s) toca /tmp/streams-heartbeat; o estado real de cada WebSocket vai para o Redis
+    # (/health/ready). Não usa o HEALTHCHECK HTTP :8000 do Dockerfile (o streams não serve HTTP).
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.healthcheck", "file", "/tmp/streams-heartbeat", "60"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
 
   postgres:
     image: postgres:15-alpine
@@ -160,7 +192,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -169,6 +201,9 @@ services:
     networks:
       - backend
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${POSTGRES_MEM_LIMIT:-2g}
+    shm_size: 256m
 
   redis:
     image: redis:7-alpine
@@ -176,7 +211,7 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -185,9 +220,11 @@ services:
     networks:
       - backend
     restart: unless-stopped
+    logging: *logging
+    mem_limit: ${REDIS_MEM_LIMIT:-512m}
 
   # --- Observabilidade opcional: docker compose --profile monitoring up -d ---
-  # Portas apenas em 127.0.0.1 (use um túnel SSH para acessar de fora). Veja docs/ALERTS.md e docs/ARCHITECTURE.md.
+  # Portas apenas em 127.0.0.1 (use um túnel SSH para acessar de fora). Veja docs/ALERTS.md e docs/RUNBOOK.md.
   prometheus:
     image: prom/prometheus:v2.54.1
     profiles: ["monitoring"]
@@ -197,18 +234,70 @@ services:
       - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
     ports:
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     networks:
       - backend
     restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Roteia os alertas do Prometheus: backend (-> WhatsApp), webhook externo opcional e Watchdog (dead man).
+  # Segredos em infra/monitoring/secrets/ (ignorado pelo git) — veja infra/monitoring/README.md.
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./infra/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./infra/monitoring/secrets:/etc/alertmanager/secrets:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093"
+    networks:
+      - backend
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9093/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Métricas do host (uso de disco/memória/CPU) para as regras de disco cheio.
+  node_exporter:
+    image: prom/node-exporter:v1.8.2
+    profiles: ["monitoring"]
+    command:
+      - --path.rootfs=/host
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+)($$|/)
+    volumes:
+      - /:/host:ro
+    pid: host
+    networks:
+      - backend
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9100/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   grafana:
     image: grafana/grafana:11.2.0
     profiles: ["monitoring"]
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # deploy.sh recusa a senha padrão "admin" quando o perfil monitoring está ativo (COMPOSE_PROFILES)
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
@@ -217,29 +306,72 @@ services:
       - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     ports:
-      - "127.0.0.1:3001:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
     depends_on:
       - prometheus
     networks:
       - backend
     restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
+  # --- Backup agendado opcional: docker compose --profile backup up -d ---
+  # pg_dump -> gzip -> criptografia (age) -> ./backups (+ cópia off-site via rclone, se configurada).
+  # Alternativa sem container: cron/systemd timer chamando scripts/backup_db.sh (veja docs/RUNBOOK.md §Backups).
+  backup:
+    build:
+      context: ./infra/backup
+    image: ${STACK_NAME:-btp}-backup:latest
+    profiles: ["backup"]
+    # mesmo UID/GID do dono do repositório no host: os arquivos em ./backups ficam legíveis pelo restore_db.sh
+    user: "${BACKUP_UID:-1000}:${BACKUP_GID:-1000}"
+    env_file: .env
+    environment:
+      PGHOST: postgres
+      BACKUP_DIR: /backups
+    volumes:
+      - ./backups:/backups
+      - ./scripts:/repo/scripts:ro
+      - ./infra/backup/secrets:/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      # último backup bem-sucedido há menos de BACKUP_INTERVAL_HOURS + 2 h
+      test: ["CMD", "/usr/local/bin/backup-healthcheck"]
+      interval: 5m
+      timeout: 10s
+      start_period: 10m
+      retries: 2
+
+# Nomes fixos (compatíveis com instalações existentes). Para rodar staging e produção no mesmo host, defina
+# STACK_NAME diferente no .env de cada um (ex.: btp_staging) e portas diferentes (HTTP_PORT, HTTPS_PORT...).
 networks:
   frontend:
-    name: btp_frontend
+    name: ${STACK_NAME:-btp}_frontend
   backend:
-    name: btp_backend
+    name: ${STACK_NAME:-btp}_backend
 
 volumes:
   postgres_data:
-    name: btp_postgres_data
+    name: ${STACK_NAME:-btp}_postgres_data
   redis_data:
-    name: btp_redis_data
+    name: ${STACK_NAME:-btp}_redis_data
   caddy_data:
-    name: btp_caddy_data
+    name: ${STACK_NAME:-btp}_caddy_data
   caddy_config:
-    name: btp_caddy_config
+    name: ${STACK_NAME:-btp}_caddy_config
   prometheus_data:
-    name: btp_prometheus_data
+    name: ${STACK_NAME:-btp}_prometheus_data
+  alertmanager_data:
+    name: ${STACK_NAME:-btp}_alertmanager_data
   grafana_data:
-    name: btp_grafana_data
+    name: ${STACK_NAME:-btp}_grafana_data

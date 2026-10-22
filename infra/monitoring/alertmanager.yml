@@ -1,0 +1,65 @@
+# Alertmanager do ISCTRADE (perfil "monitoring"). Segredos ficam em infra/monitoring/secrets/ (ignorado pelo git),
+# montado em /etc/alertmanager/secrets. Arquivos esperados (crie os que for usar; veja infra/monitoring/README.md):
+#   webhook_token  -> mesmo valor de ALERTMANAGER_WEBHOOK_TOKEN no .env (backend -> WhatsApp)
+#   external_url   -> URL de um webhook externo opcional (ntfy, Slack/Discord-compatível, n8n, gateway WhatsApp...)
+#   deadman_url    -> URL de ping do dead man's switch do próprio monitoramento (healthchecks.io etc.)
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: backend-whatsapp
+  group_by: ["alertname", "job", "queue", "stream", "account_id"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Watchdog: sempre ativo; reenviado a cada 1 min para o dead man's switch. Silêncio => monitoramento caiu.
+    - matchers: ['alertname = "Watchdog"']
+      receiver: deadman
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+    - matchers: ['severity = "critical"']
+      receiver: critical
+      repeat_interval: 1h
+      continue: false
+
+receivers:
+  - name: backend-whatsapp
+    webhook_configs:
+      - url: http://backend:8000/api/v1/monitoring/alertmanager
+        send_resolved: true
+        max_alerts: 20
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /etc/alertmanager/secrets/webhook_token
+
+  # Críticos: WhatsApp (via backend) + webhook externo, que funciona mesmo com o backend fora do ar.
+  - name: critical
+    webhook_configs:
+      - url: http://backend:8000/api/v1/monitoring/alertmanager
+        send_resolved: true
+        max_alerts: 20
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /etc/alertmanager/secrets/webhook_token
+      - url_file: /etc/alertmanager/secrets/external_url
+        send_resolved: true
+        max_alerts: 20
+
+  - name: deadman
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/deadman_url
+        send_resolved: false
+
+inhibit_rules:
+  # Serviço fora do ar explica as demais falhas do mesmo job.
+  - source_matchers: ['alertname = "ServiceDown"']
+    target_matchers: ['severity = "warning"']
+    equal: ["job"]
+  # Disco crítico suprime o aviso de disco baixo.
+  - source_matchers: ['alertname = "DiskSpaceCritical"']
+    target_matchers: ['alertname = "DiskSpaceLow"']
+    equal: ["mountpoint"]

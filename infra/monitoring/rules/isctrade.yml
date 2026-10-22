@@ -1,0 +1,189 @@
+# Regras de alerta do ISCTRADE. Validar: docker run --rm --entrypoint promtool -v "$PWD/infra/monitoring:/m" \
+#   prom/prometheus:v2.54.1 check rules /m/rules/isctrade.yml   (e "test rules /m/tests/rules_test.yml")
+# Severidade: critical = ação imediata (WhatsApp); warning = verificar no mesmo dia.
+# Cada alerta aponta a seção do docs/RUNBOOK.md com o procedimento.
+groups:
+  - name: isctrade-servicos
+    rules:
+      - alert: ServiceDown
+        expr: up{job=~"backend|celery_worker|streams"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Serviço {{ $labels.job }} ({{ $labels.instance }}) fora do ar"
+          description: "O Prometheus não consegue coletar métricas de {{ $labels.instance }} há 2 min."
+          runbook: "docs/RUNBOOK.md#servico-fora-do-ar"
+
+      - alert: BeatHeartbeatStale
+        expr: btp_beat_heartbeat_age_seconds > 120 or btp_beat_heartbeat_age_seconds == -1
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "celery_beat parado (heartbeat há {{ $value | humanizeDuration }})"
+          description: "Sem beat não há ticks, reconciliação, snapshots nem reset diário de risco."
+          runbook: "docs/RUNBOOK.md#beat-ou-worker-parado"
+
+      - alert: WorkerHeartbeatStale
+        expr: btp_worker_heartbeat_age_seconds > 180 or btp_worker_heartbeat_age_seconds == -1
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Worker da fila {{ $labels.queue }} não processa tarefas"
+          description: "ops.heartbeat não roda na fila {{ $labels.queue }} (worker parado ou fila travada)."
+          runbook: "docs/RUNBOOK.md#beat-ou-worker-parado"
+
+      - alert: StreamsHeartbeatStale
+        expr: btp_streams_heartbeat_age_seconds > 180 or btp_streams_heartbeat_age_seconds == -1
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Worker streams parado (WebSockets da Binance)"
+          description: "Sem streams não há preços de marcação nem eventos de ordem/posição em tempo real."
+          runbook: "docs/RUNBOOK.md#dados-de-mercado-parados"
+
+  - name: isctrade-dados
+    rules:
+      - alert: StaleMarketData
+        expr: btp_ws_last_message_age_seconds{kind=~"market|feed"} > 120 or btp_ws_last_message_age_seconds{kind=~"market|feed"} == -1
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Dados de mercado parados: {{ $labels.stream }} sem mensagens há {{ $value | humanizeDuration }}"
+          description: "O mark price é enviado a cada 1 s; silêncio indica conexão caída/bloqueada ou DNS."
+          runbook: "docs/RUNBOOK.md#dados-de-mercado-parados"
+
+      - alert: WebSocketDisconnected
+        expr: btp_ws_connected == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "WebSocket {{ $labels.stream }} desconectado há mais de 5 min"
+          runbook: "docs/RUNBOOK.md#dados-de-mercado-parados"
+
+      - alert: NoBotTicks
+        expr: |
+          sum(btp_bots{state=~"running|starting"}) > 0
+          and (btp_bot_last_tick_age_seconds > 300 or btp_bot_last_tick_age_seconds == -1)
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "Bots ativos sem tick há mais de 5 min"
+          description: "Há bots em execução mas nenhum tick foi concluído (worker trading, beat, Redis ou exchange)."
+          runbook: "docs/RUNBOOK.md#bots-sem-tick"
+
+      - alert: BotTickErrors
+        expr: sum(increase(btp_bot_ticks_total{result="error"}[15m])) > 5
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} ticks de bot com erro nos últimos 15 min"
+          runbook: "docs/RUNBOOK.md#bots-sem-tick"
+
+  - name: isctrade-binance
+    rules:
+      - alert: BinanceWeightHigh
+        expr: max by (host) (btp_binance_used_weight_1m) > 1800
+        for: 1m
+        labels: {severity: warning}
+        annotations:
+          summary: "Peso de requisições Binance alto em {{ $labels.host }}: {{ $value }}/2400 por minuto"
+          description: "Acima de 2400/min a Binance responde 429 e, se insistir, bane o IP (418)."
+          runbook: "docs/RUNBOOK.md#limite-de-peso-ou-ban-da-binance"
+
+      - alert: BinanceRateLimited
+        expr: sum by (host, status) (increase(btp_binance_rate_limited_total[5m])) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "Binance respondeu HTTP {{ $labels.status }} ({{ $labels.host }}) — requisições pausadas"
+          description: "429 = limite de taxa; 418 = IP banido temporariamente. Ordens novas falham até o fim da pausa."
+          runbook: "docs/RUNBOOK.md#limite-de-peso-ou-ban-da-binance"
+
+  - name: isctrade-risco
+    rules:
+      - alert: GlobalKillSwitchActive
+        expr: btp_global_kill_switch == 1
+        labels: {severity: critical}
+        annotations:
+          summary: "Kill switch GLOBAL ativo — nenhuma ordem nova será enviada"
+          runbook: "docs/RUNBOOK.md#kill-switch-acionado"
+
+      - alert: AccountKillSwitchTriggered
+        expr: sum(btp_accounts{status="killed"}) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $value }} conta(s) com kill switch acionado (drawdown/perda diária)"
+          runbook: "docs/RUNBOOK.md#kill-switch-acionado"
+
+      # Métrica exposta pela guarda de stop do reconciliador (G-01). Sem a métrica, a regra não dispara.
+      - alert: UnprotectedPosition
+        expr: sum by (account_id) (btp_positions_unprotected) > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Posição SEM STOP na corretora (conta {{ $labels.account_id }})"
+          description: "Verifique a ordem STOP_MARKET na Binance imediatamente; recoloque o stop ou feche a posição."
+          runbook: "docs/RUNBOOK.md#posicao-sem-stop"
+
+      - alert: ReconcilerDrift
+        expr: sum(increase(btp_reconciler_changes_total[30m])) > 10
+        labels: {severity: warning}
+        annotations:
+          summary: "Reconciliador corrigiu {{ $value | printf \"%.0f\" }} divergências em 30 min"
+          runbook: "docs/RUNBOOK.md#divergencia-de-reconciliacao"
+
+      - alert: AlertDeliveryFailing
+        expr: sum(btp_alerts_last_24h{status=~"failed|partial"}) > 3
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} alertas do app falharam na entrega (WhatsApp) nas últimas 24 h"
+          runbook: "docs/RUNBOOK.md#alertas-nao-chegam"
+
+  - name: isctrade-host
+    rules:
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) < 0.15
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Disco {{ $labels.mountpoint }} com {{ $value | humanizePercentage }} livre"
+          runbook: "docs/RUNBOOK.md#disco-cheio"
+
+      - alert: DiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) < 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Disco {{ $labels.mountpoint }} quase cheio ({{ $value | humanizePercentage }} livre)"
+          description: "PostgreSQL/Redis param de gravar com disco cheio."
+          runbook: "docs/RUNBOOK.md#disco-cheio"
+
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Memória disponível do host abaixo de 10%"
+          runbook: "docs/RUNBOOK.md#disco-cheio"
+
+      - alert: ClockSkew
+        expr: abs(node_timex_offset_seconds) > 0.5 or node_timex_sync_status == 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "Relógio do host fora de sincronia (NTP)"
+          description: "A Binance rejeita requisições com timestamp fora do recvWindow (-1021)."
+          runbook: "docs/RUNBOOK.md#relogio-ntp"
+
+  - name: isctrade-meta
+    rules:
+      # Sempre disparando: o Alertmanager o envia ao serviço de dead man's switch (healthchecks.io etc.).
+      # Se o ping parar, o próprio monitoramento (Prometheus/Alertmanager/host) caiu.
+      - alert: Watchdog
+        expr: vector(1)
+        labels: {severity: none}
+        annotations:
+          summary: "Watchdog do Prometheus (sempre ativo; usado como dead man's switch)"

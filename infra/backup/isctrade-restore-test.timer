@@ -1,0 +1,9 @@
+[Unit]
+Description=ISCTRADE - teste de restauração mensal (dia 1, 04:00 UTC)
+
+[Timer]
+OnCalendar=*-*-01 04:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
