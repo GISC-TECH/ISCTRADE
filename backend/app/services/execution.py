@@ -545,6 +545,21 @@ class OrderService:
         self.executor = executor
         self.rm = risk_manager or RiskManager()
 
+    def _fit_risk(
+        self, qty: Decimal, price: Decimal, stop: Decimal, state: AccountRiskState, filters: SymbolFilters, market: bool
+    ) -> Decimal:
+        """Auto-sized entries never exceed max risk per trade: step the quantity down while it would."""
+        max_risk = state.sizing_equity * state.max_risk_per_trade_pct / Decimal(100)
+        distance = abs(price - stop)
+        step = (filters.market_step_size if market else None) or filters.step_size
+        if not step or step <= 0 or distance == 0:
+            return qty
+        for _ in range(10):  # rounding residue is at most a step or two
+            if qty * distance <= max_risk or qty <= 0:
+                break
+            qty = filters.round_qty(qty - step, market=market)
+        return qty
+
     async def submit(
         self,
         db: AsyncSession,
@@ -586,20 +601,25 @@ class OrderService:
         if not intent.reduce_only and await is_global_kill_switch_on(db):
             return await self._reject(db, account, bot, intent, symbol, Decimal("0"), leverage, "global_kill_switch")
 
+        # The stop is rounded to the tick *before* sizing so auto-sizing and the risk check see the same stop
+        # distance (a short's stop rounded up on a low-priced symbol used to push risk ~0.5% over the limit).
+        stop = filters.round_price(intent.stop_loss) if intent.stop_loss is not None else None
+        risk_price = limit_price if order_type == OrderType.LIMIT and limit_price is not None else ref_price
+        is_market = order_type != OrderType.LIMIT
         qty = intent.quantity
-        if qty is None:
-            if intent.stop_loss is None:
+        auto_sized = qty is None
+        if auto_sized:
+            if stop is None:
                 return await self._reject(
                     db, account, bot, intent, symbol, Decimal("0"), leverage, "stop_loss_required"
                 )
-            qty = self.rm.max_position_size(ref_price, intent.stop_loss, risk_state) * intent.risk_fraction
-        is_market = order_type != OrderType.LIMIT
+            qty = self.rm.max_position_size(risk_price, stop, risk_state) * intent.risk_fraction
         qty = filters.round_qty(abs(qty), market=is_market)
+        if auto_sized and qty > 0:
+            qty = self._fit_risk(qty, risk_price, stop, risk_state, filters, is_market)
         if qty <= 0:
             return await self._reject(db, account, bot, intent, symbol, qty, leverage, "size_zero_after_rounding")
-        stop = filters.round_price(intent.stop_loss) if intent.stop_loss is not None else None
 
-        risk_price = limit_price if order_type == OrderType.LIMIT and limit_price is not None else ref_price
         problem = filters.check(qty, risk_price, intent.reduce_only, market=is_market)
         if problem:
             return await self._reject(db, account, bot, intent, symbol, qty, leverage, problem)
