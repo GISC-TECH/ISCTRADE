@@ -79,6 +79,33 @@ check_monitoring() {
   done
 }
 
+check_redis() { # G-27: Redis sempre com senha (ACL em infra/redis/entrypoint.sh)
+  local pw
+  pw="$(env_value REDIS_PASSWORD)"
+  [[ ${#pw} -ge 16 ]] || die "REDIS_PASSWORD ausente ou curto (mínimo 16 caracteres; ex.: python3 -c 'import secrets; print(secrets.token_hex(24))')."
+  [[ "$pw" =~ ^[A-Za-z0-9._~-]+$ ]] || die "REDIS_PASSWORD: use só letras, números e . _ ~ - (evita problemas de escape no .env/compose)."
+  local name
+  for name in REDIS_URL CELERY_BROKER_URL CELERY_RESULT_BACKEND; do
+    case "$(env_value "$name")" in
+      redis://*@* | rediss://*@*) echo "Aviso: $name já contém credenciais; confira se batem com REDIS_USERNAME/REDIS_PASSWORD." >&2 ;;
+    esac
+  done
+}
+
+check_key_rotation() { # G-29: chaves antigas válidas e cadeia de auditoria fixada durante a rotação
+  local prev key
+  prev="$(env_value MASTER_ENCRYPTION_KEYS_PREVIOUS)"
+  [[ -n "$prev" ]] || return 0
+  IFS=',' read -ra keys <<< "$prev"
+  for key in "${keys[@]}"; do
+    key="${key// /}"
+    [[ -z "$key" ]] && continue
+    [[ "$(printf '%s' "$key" | base64 -d 2>/dev/null | wc -c)" -eq 32 ]] || die "MASTER_ENCRYPTION_KEYS_PREVIOUS: cada chave deve ser base64 de 32 bytes."
+  done
+  [[ -n "$(env_value AUDIT_CHAIN_KEY)" ]] || die "rotação em andamento sem AUDIT_CHAIN_KEY: rode '$COMPOSE run --rm --no-deps backend python -m app.keys_cli audit-pin --previous' e grave o valor no .env (docs/RUNBOOK.md §10)."
+  echo "Rotação de chave em andamento: depois do deploy rode '$COMPOSE exec backend python -m app.keys_cli reencrypt' e esvazie MASTER_ENCRYPTION_KEYS_PREVIOUS." >&2
+}
+
 preflight() {
   command -v "${DOCKER%% *}" >/dev/null || die "docker não encontrado."
   $COMPOSE version >/dev/null 2>&1 || die "docker compose v2 não encontrado."
@@ -92,6 +119,8 @@ preflight() {
   if [[ "$(printf '%s' "$mek" | base64 -d 2>/dev/null | wc -c)" -ne 32 ]]; then
     die "MASTER_ENCRYPTION_KEY deve ser base64 de exatamente 32 bytes."
   fi
+  check_redis
+  check_key_rotation
   if [[ "$(env_value LIVE_TRADING_ENABLED)" == "true" ]]; then
     printf '\033[1;33mATENÇÃO:\033[0m LIVE_TRADING_ENABLED=true — contas em modo "live" enviarão ORDENS REAIS.\n'
   else

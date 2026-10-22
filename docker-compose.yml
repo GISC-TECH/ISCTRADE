@@ -208,13 +208,20 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    # Senha/ACL (G-27): infra/redis/entrypoint.sh. Os clientes (backend, workers, beat, streams) recebem a senha
+    # pelo .env (REDIS_PASSWORD/REDIS_USERNAME são injetados nas URLs pelo backend). redis-cli autenticado:
+    # docker compose exec redis /opt/isctrade/cli.sh ping
+    entrypoint: ["/opt/isctrade/entrypoint.sh"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_USERNAME: ${REDIS_USERNAME:-}
     volumes:
       - redis_data:/data
+      - ./infra/redis:/opt/isctrade:ro
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "/opt/isctrade/healthcheck.sh"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -289,6 +296,28 @@ services:
     logging: *logging
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9100/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  redis_exporter:
+    image: oliver006/redis_exporter:v1.67.0-alpine
+    profiles: ["monitoring"]
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_USER: ${REDIS_USERNAME:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_EXPORTER_CONFIG_COMMAND: "-"  # CONFIG é bloqueado pela ACL (-@admin)
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9121/health"]
       interval: 30s
       timeout: 5s
       retries: 3

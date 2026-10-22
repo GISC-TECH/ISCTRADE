@@ -86,3 +86,20 @@ tests:
               summary: "Disco / quase cheio (4% livre)"
               description: "PostgreSQL/Redis param de gravar com disco cheio."
               runbook: "docs/RUNBOOK.md#disco-cheio"
+
+  - interval: 30s
+    input_series:
+      - series: 'redis_up{job="redis", instance="redis_exporter:9121"}'
+        values: "1 0 0 0 0 0 0 0 0 0"
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RedisDown
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: RedisDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: redis, instance: "redis_exporter:9121"}
+            exp_annotations:
+              summary: "Redis inacessível (broker do Celery, locks, tempo real)"
+              description: "O redis_exporter não consegue falar com o Redis (fora do ar ou senha/ACL errada) há 2 min."
+              runbook: "docs/RUNBOOK.md#redis"

@@ -4,8 +4,30 @@ import os
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+def with_redis_auth(url: str, username: str, password: str) -> str:
+    """Add ``username:password@`` to a redis:// / rediss:// URL that has no credentials yet."""
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    if not password:
+        return url
+    parts = urlsplit(url)
+    if parts.scheme not in ("redis", "rediss") or "@" in parts.netloc:
+        return url
+    auth = f"{quote(username, safe='')}:{quote(password, safe='')}@"
+    return urlunsplit(parts._replace(netloc=auth + parts.netloc))
+
+
+def redis_url_has_password(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    try:
+        return bool(urlsplit(url).password)
+    except ValueError:
+        return False
 
 
 class Settings(BaseSettings):
@@ -28,6 +50,11 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = 10
     DB_ECHO: bool = False
     REDIS_URL: str = "redis://redis:6379/0"
+    # Redis auth (G-27). When REDIS_PASSWORD is set it is injected into REDIS_URL, CELERY_BROKER_URL and
+    # CELERY_RESULT_BACKEND (unless a URL already carries credentials). REDIS_USERNAME empty = the "default" user
+    # (requirepass); with a name, the compose Redis disables "default" and creates that ACL user.
+    REDIS_USERNAME: str = ""
+    REDIS_PASSWORD: str = ""
 
     # Auth / JWT
     JWT_SECRET: str = "CHANGE_ME"
@@ -68,8 +95,11 @@ class Settings(BaseSettings):
     TOTP_MAX_FAILURES: int = 5  # wrong codes per user per 15 min before 429
     TOTP_CHALLENGE_MINUTES: int = 5  # validity of the login step-up token
 
-    # Encryption of exchange credentials (base64-encoded 32 bytes => AES-256)
+    # Encryption of exchange credentials and TOTP secrets (base64-encoded 32 bytes => AES-256).
+    # Rotation (G-29): put the new key here, the old one(s) in MASTER_ENCRYPTION_KEYS_PREVIOUS (comma-separated),
+    # then run `python -m app.keys_cli reencrypt` and drop the previous keys. See docs/RUNBOOK.md §10.
     MASTER_ENCRYPTION_KEY: str = "CHANGE_ME"
+    MASTER_ENCRYPTION_KEYS_PREVIOUS: str = ""
 
     # Binance USDT-M Futures
     BINANCE_API_URL: str = "https://fapi.binance.com"
@@ -348,6 +378,13 @@ class Settings(BaseSettings):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
+    @model_validator(mode="after")
+    def _apply_redis_auth(self) -> "Settings":
+        for name in ("REDIS_URL", "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND"):
+            url = with_redis_auth(getattr(self, name), self.REDIS_USERNAME, self.REDIS_PASSWORD)
+            object.__setattr__(self, name, url)
+        return self
+
     @property
     def registration_mode(self) -> str:
         if self.REGISTRATION_MODE:
@@ -372,6 +409,22 @@ class Settings(BaseSettings):
             key_ok = False
         if not key_ok:
             problems.append("MASTER_ENCRYPTION_KEY deve ser base64 de 32 bytes")
+        previous = [k.strip() for k in self.MASTER_ENCRYPTION_KEYS_PREVIOUS.split(",") if k.strip()]
+        for key in previous:
+            try:
+                ok = len(base64.b64decode(key, validate=True)) == 32
+            except (binascii.Error, ValueError):
+                ok = False
+            if not ok:
+                problems.append("MASTER_ENCRYPTION_KEYS_PREVIOUS: cada chave deve ser base64 de 32 bytes")
+                break
+        if previous and not self.AUDIT_CHAIN_KEY.strip():
+            problems.append(
+                "AUDIT_CHAIN_KEY vazio durante rotação da MASTER_ENCRYPTION_KEY: fixe-o antes "
+                "(`python -m app.keys_cli audit-pin` com a chave antiga), senão a cadeia de auditoria quebra"
+            )
+        if not all(redis_url_has_password(u) for u in (self.REDIS_URL, self.CELERY_BROKER_URL)):
+            problems.append("Redis sem senha: defina REDIS_PASSWORD (G-27)")
         if "CHANGE_ME" in self.DATABASE_URL:
             problems.append("DATABASE_URL contém CHANGE_ME")
         if not self.COOKIE_SECURE:

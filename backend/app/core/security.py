@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,7 @@ from typing import Any
 import anyio
 import bcrypt
 import jwt
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.config import settings
@@ -89,33 +91,106 @@ def verify_token(token: str, expected_type: str = ACCESS_TOKEN_TYPE) -> dict[str
 
 
 # --------------------------------------------------------------------------- #
-# AES-256-GCM encryption of Binance API credentials
+# AES-256-GCM encryption of exchange credentials / TOTP secrets, with a keyring
 # --------------------------------------------------------------------------- #
-def _master_key() -> bytes:
-    """Decode MASTER_ENCRYPTION_KEY (base64 of 32 random bytes).
+# Ciphertext format:
+#   v2:<key id>:base64(nonce || ciphertext+tag)   (current; key id = first 8 hex of SHA-256(key), not secret)
+#   base64(nonce || ciphertext+tag)              (legacy, before key rotation support; tried with every key)
+# Keys: MASTER_ENCRYPTION_KEY encrypts; MASTER_ENCRYPTION_KEYS_PREVIOUS (comma-separated) only decrypt.
+_CIPHER_VERSION = "v2"
 
-    Generate with: python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
+
+class KeyringError(RuntimeError):
+    """Ciphertext encrypted with a key that is not in the keyring (or malformed)."""
+
+
+def _decode_key(value: str, name: str) -> bytes:
+    """Decode a base64 32-byte AES key.
+
+    Generate with: python -m app.keys_cli generate
     """
     try:
-        key = base64.b64decode(settings.MASTER_ENCRYPTION_KEY, validate=True)
+        key = base64.b64decode(value.strip(), validate=True)
     except (ValueError, TypeError) as exc:
-        raise RuntimeError("MASTER_ENCRYPTION_KEY must be base64-encoded") from exc
+        raise RuntimeError(f"{name} must be base64-encoded") from exc
     if len(key) != 32:
-        raise RuntimeError("MASTER_ENCRYPTION_KEY must decode to exactly 32 bytes (AES-256)")
+        raise RuntimeError(f"{name} must decode to exactly 32 bytes (AES-256)")
     return key
 
 
+def key_id(key: bytes) -> str:
+    return hashlib.sha256(key).hexdigest()[:8]
+
+
+def _master_key() -> bytes:
+    return _decode_key(settings.MASTER_ENCRYPTION_KEY, "MASTER_ENCRYPTION_KEY")
+
+
+def keyring() -> dict[str, bytes]:
+    """Key id -> key; the current key first, then MASTER_ENCRYPTION_KEYS_PREVIOUS in the given order."""
+    ring = {}
+    current = _master_key()
+    ring[key_id(current)] = current
+    for raw in (settings.MASTER_ENCRYPTION_KEYS_PREVIOUS or "").split(","):
+        if raw.strip():
+            key = _decode_key(raw, "MASTER_ENCRYPTION_KEYS_PREVIOUS")
+            ring.setdefault(key_id(key), key)
+    return ring
+
+
+def current_key_id() -> str:
+    return key_id(_master_key())
+
+
+def ciphertext_key_id(token: str) -> str | None:
+    """Key id stamped in a v2 ciphertext; None for legacy ciphertexts."""
+    if token.startswith(_CIPHER_VERSION + ":"):
+        parts = token.split(":", 2)
+        if len(parts) == 3:
+            return parts[1]
+    return None
+
+
+def needs_reencryption(token: str) -> bool:
+    return ciphertext_key_id(token) != current_key_id()
+
+
 def encrypt_api_key(plaintext: str, associated_data: bytes | None = None) -> str:
-    """Encrypt with AES-256-GCM. Output: base64(nonce || ciphertext+tag)."""
+    """Encrypt with AES-256-GCM under the current key. Output: v2:<key id>:base64(nonce || ciphertext+tag)."""
+    key = _master_key()
     nonce = os.urandom(_NONCE_SIZE)
-    ct = AESGCM(_master_key()).encrypt(nonce, plaintext.encode("utf-8"), associated_data)
-    return base64.b64encode(nonce + ct).decode("ascii")
+    ct = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"), associated_data)
+    return f"{_CIPHER_VERSION}:{key_id(key)}:{base64.b64encode(nonce + ct).decode('ascii')}"
+
+
+def _open(key: bytes, payload: str, associated_data: bytes | None) -> str:
+    raw = base64.b64decode(payload)
+    nonce, ct = raw[:_NONCE_SIZE], raw[_NONCE_SIZE:]
+    return AESGCM(key).decrypt(nonce, ct, associated_data).decode("utf-8")
 
 
 def decrypt_api_key(token: str, associated_data: bytes | None = None) -> str:
-    raw = base64.b64decode(token)
-    nonce, ct = raw[:_NONCE_SIZE], raw[_NONCE_SIZE:]
-    return AESGCM(_master_key()).decrypt(nonce, ct, associated_data).decode("utf-8")
+    ring = keyring()
+    kid = ciphertext_key_id(token)
+    if kid is not None:
+        key = ring.get(kid)
+        if key is None:
+            raise KeyringError(
+                f"ciphertext uses key id {kid}, which is not in MASTER_ENCRYPTION_KEY/MASTER_ENCRYPTION_KEYS_PREVIOUS"
+            )
+        return _open(key, token.split(":", 2)[2], associated_data)
+    last: Exception | None = None
+    for key in ring.values():  # legacy ciphertext: the GCM tag tells which key is right
+        try:
+            return _open(key, token, associated_data)
+        except InvalidTag as exc:
+            last = exc
+    raise last or KeyringError("empty keyring")
+
+
+def reencrypt(token: str, associated_data: bytes | None = None) -> str:
+    """Decrypt with whichever key matches and encrypt again under the current key."""
+    return encrypt_api_key(decrypt_api_key(token, associated_data), associated_data)
 
 
 # --------------------------------------------------------------------------- #

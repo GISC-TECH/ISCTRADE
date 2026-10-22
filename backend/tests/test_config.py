@@ -21,7 +21,7 @@ def test_production_problems_flags_insecure_settings():
         ALLOW_REGISTRATION=True,
     )
     problems = bad.production_problems()
-    assert len(problems) == 6
+    assert len(problems) == 7  # + registro aberto (G-03b) + Redis sem senha (G-27)
     assert not any("CHANGE_ME" == p for p in problems)
 
 
@@ -37,6 +37,7 @@ def test_production_problems_accepts_strong_settings():
         JWT_SECRET=secrets.token_urlsafe(48),
         MASTER_ENCRYPTION_KEY=base64.b64encode(os.urandom(32)).decode(),
         DATABASE_URL="postgresql+asyncpg://u:pw@h/db",
+        REDIS_PASSWORD=secrets.token_urlsafe(24),
         COOKIE_SECURE=True,
         DEBUG=False,
         ALLOW_REGISTRATION=False,

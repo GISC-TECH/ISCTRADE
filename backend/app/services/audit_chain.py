@@ -49,6 +49,8 @@ _SEAL_LOCK_KEY = 0x6175646974
 
 def chain_key() -> bytes:
     explicit = (settings.AUDIT_CHAIN_KEY or "").strip()
+    if explicit.startswith("b64:"):  # pinned binary key (python -m app.keys_cli audit-pin), survives key rotation
+        return base64.b64decode(explicit[4:], validate=True)
     if explicit:
         return explicit.encode()
     try:

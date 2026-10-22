@@ -2,13 +2,13 @@
 
 ```bash
 # .env: COMPOSE_PROFILES=monitoring (ou monitoring,backup), GRAFANA_ADMIN_PASSWORD, ALERTMANAGER_WEBHOOK_TOKEN
-./scripts/deploy.sh          # sobe Prometheus, Alertmanager, node-exporter e Grafana (portas só em 127.0.0.1)
+./scripts/deploy.sh          # sobe Prometheus, Alertmanager, node-exporter, redis_exporter e Grafana (portas só em 127.0.0.1)
 ssh -L 9090:127.0.0.1:9090 -L 9093:127.0.0.1:9093 -L 3001:127.0.0.1:3001 usuario@servidor
 ```
 
 | Arquivo | Conteúdo |
 |---|---|
-| `prometheus.yml` | alvos: backend `/metrics`, workers Celery (9101), streams (9102), node-exporter, Alertmanager |
+| `prometheus.yml` | alvos: backend `/metrics`, workers Celery (9101), streams (9102), node-exporter, redis_exporter (9121, autentica com `REDIS_PASSWORD`), Alertmanager |
 | `rules/isctrade.yml` | regras de alerta (serviço fora, beat/worker/streams parados, dados de mercado parados, bots sem tick, peso/ban Binance, kill switch, posição sem stop, divergência do reconciliador, falha de entrega, disco/memória/NTP, Watchdog) |
 | `tests/rules_test.yml` | testes unitários das regras (`promtool test rules`) |
 | `alertmanager.yml` | roteamento: tudo → backend (WhatsApp); críticos → backend + webhook externo; `Watchdog` → dead man's switch |
@@ -66,3 +66,4 @@ docker compose exec alertmanager amtool --alertmanager.url=http://127.0.0.1:9093
 | `btp_binance_rate_limited_total{host,status}` | workers/API | 429/418 da Binance |
 | `btp_positions_unprotected` | guarda de stop do reconciliador (G-01) | posição sem stop |
 | `node_*` | node-exporter | disco, memória, NTP |
+| `redis_up`, `redis_*` | redis_exporter | Redis fora/senha errada (`RedisDown`), memória, clientes |

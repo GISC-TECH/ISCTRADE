@@ -1,8 +1,15 @@
+import os
+
 from celery import Celery
 from celery.schedules import crontab
 from kombu import Exchange, Queue
 
 from app.core.config import settings
+
+# Celery gives the CELERY_BROKER_URL / CELERY_RESULT_BACKEND *environment variables* precedence over the values passed
+# below; keep them equal to the settings, which carry the injected Redis credentials (REDIS_PASSWORD, G-27).
+os.environ["CELERY_BROKER_URL"] = settings.CELERY_BROKER_URL
+os.environ["CELERY_RESULT_BACKEND"] = settings.CELERY_RESULT_BACKEND
 
 celery_app = Celery(
     "trading",
