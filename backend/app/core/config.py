@@ -39,7 +39,14 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = True
     COOKIE_DOMAIN: str | None = None
 
-    ALLOW_REGISTRATION: bool = True
+    # Self-service signup. closed = nobody (bootstrap the admin with `python -m app.cli create-admin`);
+    # invite = only with a single-use invite (POST /admin/invites or `python -m app.cli create-invite`);
+    # open = anyone. Unset: derived from the legacy ALLOW_REGISTRATION (true -> open, false -> closed).
+    REGISTRATION_MODE: Literal["closed", "invite", "open"] | None = None
+    ALLOW_REGISTRATION: bool = False
+    # Production refuses to start with open signup unless this explicit override is set.
+    ALLOW_OPEN_REGISTRATION_IN_PRODUCTION: bool = False
+    INVITE_EXPIRE_HOURS: Annotated[int, Field(ge=1, le=24 * 90)] = 72
     LOGIN_RATE_LIMIT_PER_MINUTE: int = 10
     # Failed-login budget per e-mail (across all IPs) per 15 minutes; blocks distributed brute force.
     LOGIN_FAILURES_PER_EMAIL: int = 20
@@ -331,6 +338,12 @@ class Settings(BaseSettings):
         return v
 
     @property
+    def registration_mode(self) -> str:
+        if self.REGISTRATION_MODE:
+            return self.REGISTRATION_MODE
+        return "open" if self.ALLOW_REGISTRATION else "closed"
+
+    @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
 
@@ -354,6 +367,12 @@ class Settings(BaseSettings):
             problems.append("COOKIE_SECURE deve ser true em produção")
         if self.DEBUG:
             problems.append("DEBUG deve ser false em produção")
+        if self.registration_mode == "open" and not self.ALLOW_OPEN_REGISTRATION_IN_PRODUCTION:
+            problems.append(
+                "cadastro aberto em produção (ALLOW_REGISTRATION=true / REGISTRATION_MODE=open): use "
+                "REGISTRATION_MODE=invite ou closed e crie o admin com `python -m app.cli create-admin` "
+                "(override explícito: ALLOW_OPEN_REGISTRATION_IN_PRODUCTION=true)"
+            )
         return problems
 
 

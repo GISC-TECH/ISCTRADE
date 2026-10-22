@@ -21,6 +21,9 @@ os.environ["COOKIE_SECURE"] = "false"
 os.environ["REDIS_URL"] = "redis://127.0.0.1:1/0"  # unreachable on purpose -> in-memory fallbacks
 os.environ["LIVE_TRADING_ENABLED"] = "false"
 os.environ["CELERY_DISPATCH_ENABLED"] = "false"
+# Most tests sign users up through the API; registration is closed by default (G-03b).
+os.environ["ALLOW_REGISTRATION"] = "true"
+os.environ.pop("REGISTRATION_MODE", None)
 # Alerts: never inherit a real WhatsApp configuration from the developer's shell.
 for _var in [k for k in os.environ if k.startswith(("WHATSAPP_", "TELEGRAM_", "SMTP_", "EMAIL_"))]:
     del os.environ[_var]

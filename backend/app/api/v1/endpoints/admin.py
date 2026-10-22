@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,8 @@ from app.models import (
     User,
     Workspace,
 )
+from app.models.base import utcnow
+from app.models.invite import RegistrationInvite
 from app.schemas.common import Page
 from app.schemas.history import AuditRead
 from app.schemas.user import AdminUserUpdate, UserRead
@@ -28,6 +31,7 @@ from app.services import audit_chain
 from app.services.audit import log_event
 from app.services.kill_switch import get_global_kill_switch, set_global_kill_switch
 from app.services.mfa import clear_mfa, get_security_policy, set_security_policy
+from app.services.registration import create_invite, invite_status
 
 router = APIRouter()
 
@@ -236,3 +240,68 @@ async def reset_user_2fa(
     await db.commit()
     await db.refresh(user)
     return user
+
+
+# ------------------------------------------------------------------ registration invites (G-03b)
+class InviteIn(BaseModel):
+    email: EmailStr | None = None
+    note: str | None = Field(None, max_length=255)
+    hours: int | None = Field(None, ge=1, le=24 * 90)
+
+
+class InviteRead(BaseModel):
+    id: uuid.UUID
+    email: str | None
+    note: str | None
+    status: str
+    created_at: datetime
+    expires_at: datetime
+    used_at: datetime | None = None
+    used_by_id: uuid.UUID | None = None
+
+
+class InviteCreated(InviteRead):
+    token: str  # shown once; only its SHA-256 is stored
+    registration_mode: str
+
+
+def _invite_read(inv: RegistrationInvite) -> dict:
+    return {
+        "id": inv.id, "email": inv.email, "note": inv.note, "status": invite_status(inv),
+        "created_at": inv.created_at, "expires_at": inv.expires_at, "used_at": inv.used_at,
+        "used_by_id": inv.used_by_id,
+    }  # fmt: skip
+
+
+@router.post("/invites", response_model=InviteCreated, status_code=status.HTTP_201_CREATED)
+async def create_registration_invite(
+    data: InviteIn, admin: User = Depends(require_superadmin), db: AsyncSession = Depends(get_db)
+) -> dict:
+    invite, token = await create_invite(db, created_by=admin.id, email=data.email, note=data.note, hours=data.hours)
+    await log_event(db, "admin.invite_created", user_id=admin.id, invite_id=str(invite.id), email=invite.email)
+    await db.commit()
+    await db.refresh(invite)
+    return {**_invite_read(invite), "token": token, "registration_mode": settings.registration_mode}
+
+
+@router.get("/invites", response_model=list[InviteRead])
+async def list_registration_invites(
+    admin: User = Depends(require_superadmin), db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    rows = await db.scalars(select(RegistrationInvite).order_by(RegistrationInvite.created_at.desc()).limit(200))
+    return [_invite_read(inv) for inv in rows]
+
+
+@router.delete("/invites/{invite_id}", response_model=InviteRead)
+async def revoke_registration_invite(
+    invite_id: uuid.UUID, admin: User = Depends(require_superadmin), db: AsyncSession = Depends(get_db)
+) -> dict:
+    invite = await db.get(RegistrationInvite, invite_id)
+    if invite is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Convite não encontrado")
+    if invite_status(invite) == "pending":
+        invite.revoked_at = utcnow()
+        await log_event(db, "admin.invite_revoked", user_id=admin.id, invite_id=str(invite.id))
+        await db.commit()
+        await db.refresh(invite)
+    return _invite_read(invite)

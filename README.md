@@ -21,7 +21,7 @@ Plataforma **self-hosted** para automação e monitoramento de operações em **
 > `LIVE_TRADING_ENABLED=true` no servidor **e** a conta configurada com `execution_mode=live`. Contas novas usam Testnet + paper.
 
 ### Funcionalidades
-- **Autenticação**: registro/login, JWT de acesso + refresh em cookies `httpOnly`, logout de todas as sessões, troca de senha, rate limiting de login/registro. O primeiro usuário cadastrado vira super-admin.
+- **Autenticação**: registro/login, JWT de acesso + refresh em cookies `httpOnly`, logout de todas as sessões, troca de senha, rate limiting de login/registro. Cadastro fechado por padrão (`REGISTRATION_MODE=closed|invite|open`); o super-admin é criado pela CLI `python -m app.cli create-admin`.
 - **2FA (TOTP)**: cadastro por QR code (Google Authenticator, Aegis, 1Password…), 10 códigos de recuperação de uso único, verificação no login, desativação com senha + código. Obrigatório para super-admins (painel Admin), para quem pode operar contas **live** e, opcionalmente, para todos os usuários (política no painel Admin) — veja [docs/SECURITY.md](docs/SECURITY.md#autenticação-em-dois-fatores-totp).
 - **Workspaces e RBAC**: papéis `admin`, `trader`, `viewer` por workspace; membros, troca de workspace ativo.
 - **Contas Binance**: conexão com chaves criptografadas, verificação de credenciais, start/stop, reset do kill switch, limites de risco por conta.
@@ -104,7 +104,7 @@ Serviços: `caddy`, `frontend`, `migrate` (executa `alembic upgrade head` e ence
   `docker compose --profile monitoring up -d` → http://localhost:9090, :9093 e :3001 (defina `GRAFANA_ADMIN_PASSWORD` no `.env`); regras de alerta e roteamento para WhatsApp/webhook em [infra/monitoring/README.md](infra/monitoring/README.md)
 - Alertas via WhatsApp: preencha `WHATSAPP_*` no `.env` (ex.: `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER=wago`, `WHATSAPP_API_TOKEN`, `WHATSAPP_TO`) — passo a passo em [docs/ALERTS.md](docs/ALERTS.md)
 
-Acesse `/auth/register` e crie o primeiro usuário (vira super-admin). Depois, em **Contas**, conecte uma conta (Testnet + paper por padrão) e crie bots em **Bots**. Depois de criar os usuários necessários, defina `ALLOW_REGISTRATION=false`.
+Crie o super-admin pela CLI: `docker compose exec backend python -m app.cli create-admin --email voce@exemplo.com` (pede a senha). Outros usuários: `REGISTRATION_MODE=invite` + convites de uso único (painel Admin → `POST /api/v1/admin/invites` ou `python -m app.cli create-invite`). Depois, em **Contas**, conecte uma conta (Testnet + paper por padrão) e crie bots em **Bots**.
 
 ### Backend sem Docker
 

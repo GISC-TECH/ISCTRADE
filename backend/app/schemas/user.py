@@ -10,6 +10,8 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     full_name: str | None = Field(None, max_length=255)
+    # Required when REGISTRATION_MODE=invite (single-use token from an admin).
+    invite_token: str | None = Field(None, max_length=128)
 
 
 class UserLogin(BaseModel):

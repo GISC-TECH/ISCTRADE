@@ -3,7 +3,7 @@ import uuid
 from datetime import timedelta
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import ACCESS_COOKIE_NAME, get_current_user, get_current_user_base
@@ -29,7 +29,6 @@ from app.core.security import (
 from app.models.base import as_utc, utcnow
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
-from app.models.workspace import Workspace
 from app.schemas.user import (
     DisclaimerAccept,
     MfaChallenge,
@@ -48,6 +47,7 @@ from app.schemas.user import (
 )
 from app.services import mfa
 from app.services.audit import log_event
+from app.services.registration import RegistrationError, register_user
 from app.services.users import user_read
 
 logger = logging.getLogger(__name__)
@@ -113,6 +113,12 @@ def clear_tokens(response: Response) -> None:
     response.delete_cookie(SESSION_MARKER_COOKIE, path="/", **opts)
 
 
+@router.get("/registration")
+async def registration_info() -> dict:
+    """Public: which signup flow the login page should offer (closed / invite / open)."""
+    return {"mode": settings.registration_mode}
+
+
 @router.post(
     "/register",
     response_model=UserRead,
@@ -120,28 +126,21 @@ def clear_tokens(response: Response) -> None:
     dependencies=[Depends(rate_limiter(settings.REGISTER_RATE_LIMIT_PER_MINUTE, scope="register"))],
 )
 async def register(data: UserCreate, request: Request, db: AsyncSession = Depends(get_db)) -> User:
-    if not settings.ALLOW_REGISTRATION:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cadastro desabilitado")
-    email = data.email.lower()
-    if await db.scalar(select(User).where(User.email == email)):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="E-mail já cadastrado")
-    # Self-hosted bootstrap: the very first user becomes the platform super-admin.
-    is_first = (await db.scalar(select(func.count()).select_from(User))) == 0
-    user = User(
-        email=email,
-        full_name=data.full_name,
-        hashed_password=await hash_password_async(data.password),
-        role=Role.ADMIN if is_first else Role.TRADER,
-    )
-    db.add(user)
-    await db.flush()
-    workspace = Workspace(name="Workspace pessoal", owner_id=user.id)
-    db.add(workspace)
-    await db.flush()
-    user.active_workspace_id = workspace.id
+    """Self-service signup per REGISTRATION_MODE (closed / invite / open); see app.services.registration."""
+    try:
+        user, invite = await register_user(
+            db, email=data.email, password=data.password, full_name=data.full_name, invite_token=data.invite_token
+        )
+    except RegistrationError as exc:
+        if exc.status_code == status.HTTP_403_FORBIDDEN and settings.registration_mode == "invite":
+            await log_event(
+                db, "auth.register_denied", level="warning", ip_address=client_ip(request),
+                email=data.email.lower(), reason=exc.detail, commit=True,
+            )  # fmt: skip
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     await log_event(
-        db, "auth.register", user_id=user.id, workspace_id=workspace.id, ip_address=client_ip(request),
-        superadmin=is_first,
+        db, "auth.register", user_id=user.id, workspace_id=user.active_workspace_id, ip_address=client_ip(request),
+        superadmin=user.role == Role.ADMIN, invite_id=str(invite.id) if invite else None,
     )  # fmt: skip
     await db.commit()
     await db.refresh(user)

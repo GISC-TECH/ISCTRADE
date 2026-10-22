@@ -18,9 +18,10 @@ def test_production_problems_flags_insecure_settings():
         DATABASE_URL="postgresql+asyncpg://u:CHANGE_ME@h/db",
         COOKIE_SECURE=False,
         DEBUG=True,
+        ALLOW_REGISTRATION=True,
     )
     problems = bad.production_problems()
-    assert len(problems) == 5
+    assert len(problems) == 6
     assert not any("CHANGE_ME" == p for p in problems)
 
 
@@ -38,6 +39,7 @@ def test_production_problems_accepts_strong_settings():
         DATABASE_URL="postgresql+asyncpg://u:pw@h/db",
         COOKIE_SECURE=True,
         DEBUG=False,
+        ALLOW_REGISTRATION=False,
     )
     assert good.is_production
     assert good.production_problems() == []

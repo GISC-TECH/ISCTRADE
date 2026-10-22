@@ -13,6 +13,7 @@ from app.models.enums import (
     OrderStatus,
     OrderType,
 )
+from app.models.invite import RegistrationInvite
 from app.models.news import EconomicEvent, NewsItem
 from app.models.refresh_token import RefreshToken
 from app.models.scanner import MarketScan
@@ -25,6 +26,7 @@ __all__ = [
     "Base",
     "User",
     "RefreshToken",
+    "RegistrationInvite",
     "Workspace",
     "WorkspaceMember",
     "Account",

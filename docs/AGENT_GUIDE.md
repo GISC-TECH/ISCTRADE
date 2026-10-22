@@ -58,7 +58,7 @@ Serviços definidos em `docker-compose.yml`:
 | `caddy` | Proxy HTTPS: `/api/*`, `/health`, `/docs` → backend; resto → frontend |
 
 Acesso: https://localhost (Caddy) ou http://localhost:3000; API em `/api/v1`; documentação interativa em
-http://localhost:8000/docs (desligada em produção). Crie o primeiro usuário em `/auth/register` — ele vira super-admin.
+http://localhost:8000/docs (desligada em produção). Crie o super-admin com `python -m app.cli create-admin --email voce@exemplo.com` (o cadastro é fechado por padrão; fora de produção, com `REGISTRATION_MODE=open`, o primeiro cadastro ainda vira super-admin).
 
 Produção: `./scripts/deploy.sh` (valida `.env`, faz backup, build, migrações, sobe e checa health) — ou
 `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`.

@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "accounts",
     "bot_configs",
     "refresh_tokens",
+    "registration_invites",
     "orders",
     "trades",
     "positions",

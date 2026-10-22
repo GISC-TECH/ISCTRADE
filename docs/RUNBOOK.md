@@ -57,7 +57,10 @@ Faça na ordem; não pule etapas. Registre data/responsável de cada item.
 - [ ] `ENVIRONMENT=production`, `DOMAIN=seu.dominio`, `ACME_EMAIL`.
 - [ ] **`CORS_ORIGINS=https://seu.dominio`** — obrigatório (também valida o WebSocket do painel; sem ele o tempo real
       fica em "Reconectando…"). O `deploy.sh` recusa o deploy se faltar.
-- [ ] `ALLOW_REGISTRATION`: crie o usuário administrador e depois deixe `false`.
+- [ ] Cadastro: `REGISTRATION_MODE=closed` (ou `invite`); a produção **recusa iniciar** com cadastro aberto
+      (`ALLOW_REGISTRATION=true`/`open`) sem `ALLOW_OPEN_REGISTRATION_IN_PRODUCTION=true`. Crie o admin com
+      `docker compose exec backend python -m app.cli create-admin --email voce@exemplo.com` e confira com
+      `python -m app.cli registration-status`.
 - [ ] `LIVE_TRADING_ENABLED=false` até a etapa 2.6.
 - [ ] Alertas: `WHATSAPP_*` (docs/ALERTS.md) e envie um alerta de teste pela tela Monitoramento.
 - [ ] Monitoramento: `COMPOSE_PROFILES=monitoring,backup`, `GRAFANA_ADMIN_PASSWORD` forte,

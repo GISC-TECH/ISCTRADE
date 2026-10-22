@@ -49,7 +49,7 @@
 ## Autenticação e autorização
 - Senhas com **bcrypt**. Troca de senha e "sair de todos os dispositivos" incrementam `token_version`, revogando todos os JWTs emitidos.
 - JWT de acesso (curta duração) e refresh (longa duração) em cookies **httpOnly**, `SameSite=Lax`, `Secure` em produção. O cookie de refresh tem `path=/api/v1/auth`. O cookie `btp_session` é apenas um marcador sem segredo, usado pelo middleware do Next.js para redirecionar ao login.
-- Rate limiting (Redis, com fallback em memória) em login e registro. `ALLOW_REGISTRATION=false` desativa novos cadastros.
+- Rate limiting (Redis, com fallback em memória) em login e registro. Cadastro fechado por padrão (`REGISTRATION_MODE=closed`); `invite` exige convite de uso único (só o SHA-256 é guardado, vinculável a um e-mail, expira em `INVITE_EXPIRE_HOURS`, revogável); `open` é recusado em produção na inicialização sem `ALLOW_OPEN_REGISTRATION_IN_PRODUCTION=true`. O super-admin é criado pela CLI `python -m app.cli create-admin` (senha por prompt/stdin/`BTP_ADMIN_PASSWORD`, nunca na linha de comando); em produção o cadastro nunca concede super-admin e é recusado enquanto não há usuários (sem corrida pelo primeiro cadastro).
 - RBAC por workspace: `admin` (gerencia contas, membros, reset de kill switch), `trader` (opera contas e bots), `viewer` (somente leitura). O dono do workspace é sempre `admin`. O papel global `admin` (super-admin) acessa o painel de administração.
 - Isolamento de dados por workspace em todas as consultas; o header `X-Workspace-ID` é validado contra a associação do usuário.
 - **2FA (TOTP)** — veja a seção abaixo.
