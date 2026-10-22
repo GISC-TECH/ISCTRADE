@@ -130,7 +130,7 @@ Regras:
 | `REALTIME_KLINE_TTL_SECONDS` | `120` | Expiração das assinaturas de candles sem renovação |
 | `REALTIME_MARKET_FEED` | `true` | O worker `streams` publica tickers/mark/candles públicos |
 | `PAPER_ORDER_CHECK_SECONDS` | `10` | Intervalo da tarefa `paper.process_orders` |
-| `NEXT_PUBLIC_WS_URL` | vazio | URL do WebSocket no build do frontend; vazio = mesma origem. Em dev sem Caddy use `ws://localhost:8000/api/v1/ws` (o rewrite do Next.js não encaminha WebSocket) |
+| `NEXT_PUBLIC_WS_URL` | vazio | URL do WebSocket no build do frontend; vazio = mesma origem. Acessando o Next.js direto (`:3000`, dev ou Docker) o rewrite `/api/*` do Next.js 16 **encaminha o upgrade do WebSocket** ao backend (verificado em `next dev` e no `server.js` standalone); só é preciso que a origem do navegador seja aceita: em desenvolvimento qualquer `http(s)://localhost`/`127.0.0.1`/`[::1]` em qualquer porta, em produção apenas as de `CORS_ORIGINS` (origens recusadas aparecem no log do backend: `websocket origin rejected`) |
 
 Nenhuma delas é secreta; os padrões funcionam sem alteração. O Caddy já encaminha `/api/v1/ws` sem buffer
 (`flush_interval -1`) e, ao recarregar a configuração, mantém conexões abertas por até 5 min

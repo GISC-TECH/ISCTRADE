@@ -54,7 +54,7 @@ Serviços definidos em `docker-compose.yml`:
 | `celery_worker` | `celery -A app.tasks.celery_app worker` (ticks de bots, reconciliação, snapshots) |
 | `celery_beat` | `celery -A app.tasks.celery_app beat` — **uma única instância** |
 | `streams` | `python -m app.workers.streams` (WebSockets da Binance) — **uma única instância** |
-| `frontend` | Next.js 14 (porta `127.0.0.1:3000`) |
+| `frontend` | Next.js 16 (porta `127.0.0.1:3000`) |
 | `caddy` | Proxy HTTPS: `/api/*`, `/health`, `/docs` → backend; resto → frontend |
 
 Acesso: https://localhost (Caddy) ou http://localhost:3000; API em `/api/v1`; documentação interativa em

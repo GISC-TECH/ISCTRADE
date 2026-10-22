@@ -30,7 +30,7 @@ Plataforma **self-hosted** para automação e monitoramento de operações em **
 - **Integração Binance**: cliente REST assinado, WebSockets (user data + mark price) com reconexão, reconciliador de ordens/posições.
 - **Dashboard**: patrimônio, PnL, posições, curva de equity, histórico de ordens/execuções/auditoria.
 - **Admin**: estatísticas globais, usuários, workspaces, auditoria global e **kill switch global**.
-- **Monitoramento**: logs JSON com `request_id`, `/health/ready`, métricas Prometheus (`/metrics`, só rede interna), Prometheus + Grafana opcionais e tela **Monitoramento** (saúde, alertas, configurações).
+- **Monitoramento**: logs JSON com `request_id`, `/health/ready` (beat, workers, WebSockets, ticks), métricas Prometheus (`/metrics`, só rede interna), Prometheus + Alertmanager (regras → WhatsApp/webhook) + Grafana opcionais, dead man's switch externo e tela **Monitoramento** (saúde, alertas, configurações).
 - **Alertas via WhatsApp**: WAGO (padrão), wago-api self-hosted, Meta Cloud API, Evolution API ou gateway HTTP genérico; kill switch, limites de risco, ordens, posições, erros, WebSocket, divergências, falhas de tarefas e resumo diário de PnL — veja [docs/ALERTS.md](docs/ALERTS.md).
 
 ## Stack
@@ -40,7 +40,7 @@ Plataforma **self-hosted** para automação e monitoramento de operações em **
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 (async), Alembic, Pydantic v2 |
 | Tarefas assíncronas | Celery (worker + beat) + Redis 7 |
 | Banco de dados | PostgreSQL 15 |
-| Frontend | Next.js 14 (App Router), TypeScript, Tailwind CSS, shadcn/ui (Radix), Recharts |
+| Frontend | Next.js 16 (App Router, Turbopack) + React 19, TypeScript, Tailwind CSS, shadcn/ui (Radix), Recharts |
 | Proxy / TLS | Caddy 2 (HTTPS automático) |
 | Infra | Docker / Docker Compose, GitHub Actions (CI) |
 | Corretora | Binance USDT-M Futures (REST `/fapi` + WebSocket) |
@@ -56,9 +56,10 @@ backend/
   app/backtest/     motor de backtest e carregadores de dados
   app/tasks/        Celery (worker + agenda do beat)     app/workers/   processo de WebSockets
   alembic/          migrações                   tests/         pytest (Binance sempre mockada)
-frontend/           Next.js 14 (auth, dashboard, contas, bots, backtest, histórico, workspaces, perfil, admin)
+frontend/           Next.js 16 / React 19 (auth, dashboard, contas, bots, backtest, histórico, workspaces, perfil, admin)
 docs/               ARCHITECTURE.md, SECURITY.md, ROADMAP.md
-scripts/            deploy.sh, backup_db.sh
+scripts/            deploy.sh, backup_db.sh, restore_db.sh
+infra/              monitoring/ (Prometheus, regras, Alertmanager, Grafana), backup/ (container e timers de backup)
 docs/ci/            workflow de CI do GitHub Actions (lint + testes + build) — ativação pendente
 ```
 
@@ -87,16 +88,16 @@ python3 -c "import secrets; print(secrets.token_urlsafe(64))"                 # 
 python3 -c "import os,base64; print(base64.b64encode(os.urandom(32)).decode())" # MASTER_ENCRYPTION_KEY
 
 docker compose up -d --build
-docker compose ps        # aguarde backend/frontend/celery_worker "healthy"
+docker compose ps        # aguarde todos os serviços "healthy" (inclusive streams e celery_beat)
 ```
 
-Serviços: `caddy`, `frontend`, `migrate` (executa `alembic upgrade head` e encerra), `backend`, `celery_worker`, `celery_beat`, `streams`, `postgres`, `redis` (+ `prometheus` e `grafana` no perfil opcional `monitoring`).
+Serviços: `caddy`, `frontend`, `migrate` (executa `alembic upgrade head` e encerra), `backend`, `celery_worker` (fila `default`: scanner, notícias, calendário, alertas), `celery_worker_trading` (fila `trading`: ticks dos bots, ordens paper, reconciliação, snapshots, reset de risco), `celery_beat`, `streams`, `postgres`, `redis` (+ `prometheus`, `alertmanager`, `node_exporter` e `grafana` no perfil opcional `monitoring`; `backup` no perfil `backup`). Todos têm healthcheck e rotação de logs.
 
-- Aplicação: https://localhost (Caddy, certificado local) — ou http://localhost:3000 direto no Next.js
+- Aplicação: https://localhost (Caddy, certificado local) — ou http://localhost:3000 direto no Next.js (o Next encaminha `/api/*` e o WebSocket do tempo real ao backend; em desenvolvimento qualquer origem `localhost`/`127.0.0.1` é aceita no WebSocket, em produção a origem precisa estar em `CORS_ORIGINS`)
 - API: https://localhost/api/v1 — documentação interativa em http://localhost:8000/docs (desabilitada em produção)
-- Health check: http://localhost:8000/health · prontidão (DB/Redis/broker/streams): http://localhost:8000/health/ready
-- Métricas: http://localhost:8000/metrics (não exposto pelo Caddy). Prometheus/Grafana opcionais:
-  `docker compose --profile monitoring up -d` → http://localhost:9090 e http://localhost:3001 (defina `GRAFANA_ADMIN_PASSWORD` no `.env`)
+- Health check: http://localhost:8000/health · prontidão (DB/Redis/broker + beat, workers, WebSockets, ticks): http://localhost:8000/health/ready — detalhes em [docs/RUNBOOK.md](docs/RUNBOOK.md#saude)
+- Métricas: http://localhost:8000/metrics (não exposto pelo Caddy). Prometheus/Alertmanager/Grafana opcionais:
+  `docker compose --profile monitoring up -d` → http://localhost:9090, :9093 e :3001 (defina `GRAFANA_ADMIN_PASSWORD` no `.env`); regras de alerta e roteamento para WhatsApp/webhook em [infra/monitoring/README.md](infra/monitoring/README.md)
 - Alertas via WhatsApp: preencha `WHATSAPP_*` no `.env` (ex.: `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER=wago`, `WHATSAPP_API_TOKEN`, `WHATSAPP_TO`) — passo a passo em [docs/ALERTS.md](docs/ALERTS.md)
 
 Acesse `/auth/register` e crie o primeiro usuário (vira super-admin). Depois, em **Contas**, conecte uma conta (Testnet + paper por padrão) e crie bots em **Bots**. Depois de criar os usuários necessários, defina `ALLOW_REGISTRATION=false`.
@@ -136,24 +137,28 @@ Em desenvolvimento sem HTTPS, use `COOKIE_SECURE=false` no backend.
 ### Produção
 
 ```bash
-./scripts/deploy.sh             # valida .env, git pull, backup, build, migrações, up e health checks
-./scripts/deploy.sh rollback    # volta ao commit do deploy anterior
-./scripts/backup_db.sh          # backup manual (retém os 14 mais recentes em ./backups)
+./scripts/deploy.sh             # valida .env (inclui CORS_ORIGINS com https://DOMAIN), git pull, backup, build, migrações, up e health checks
+./scripts/deploy.sh rollback    # volta ao commit do deploy anterior (indica o backup pré-deploy para restaurar)
+./scripts/backup_db.sh          # backup manual criptografado (age/gpg) + cópia off-site (rclone) + retenção
+./scripts/restore_db.sh --verify   # teste de restauração do último backup num banco temporário
 ```
 
 Ou manualmente: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`.
 
 - Defina `DOMAIN` e `ACME_EMAIL` no `.env` para que o Caddy emita certificados TLS automaticamente.
 - Em produção a API **não inicia** se `JWT_SECRET`/`MASTER_ENCRYPTION_KEY` forem fracos, se `COOKIE_SECURE` for falso ou `DEBUG` verdadeiro.
+- `CORS_ORIGINS` precisa conter `https://<DOMAIN>` (também valida o WebSocket do painel).
 - Mantenha **uma** instância de `celery_beat` e de `streams`.
+- Backups agendados/criptografados/off-site, monitor externo (dead man's switch), go-live e resposta a incidentes
+  (incluindo o simulado do kill switch): **[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
 
 ### Integração contínua
 
-O workflow em [`docs/ci/ci.yml`](docs/ci/ci.yml) (mova para `.github/workflows/` para ativar — veja [`docs/ci/README.md`](docs/ci/README.md)) executa em cada push/PR: `ruff check`, `ruff format --check`, `pytest` (com teste de migração em PostgreSQL 15), `next lint`, `tsc --noEmit`, `next build`, validação do `docker compose config`, `shellcheck` e build das imagens Docker.
+O workflow em [`docs/ci/ci.yml`](docs/ci/ci.yml) (**inativo até ser copiado** para `.github/workflows/` — veja [`docs/ci/README.md`](docs/ci/README.md)) executa em cada push/PR: `ruff check`, `ruff format --check`, `pytest` (com teste de migração em PostgreSQL 15), `pip-audit`, `eslint`, `tsc --noEmit`, `next build`, `npm audit` (dependências de produção), validação do `docker compose config`, `shellcheck`, `promtool`/`amtool` (regras de alerta) e build das imagens Docker.
 
 ## Documentação
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/ALERTS.md`](docs/ALERTS.md) (alertas via WhatsApp) · [`docs/STRATEGIES.md`](docs/STRATEGIES.md) (estratégias e scanner) · [`docs/NEWS.md`](docs/NEWS.md) (notícias, sentimento e calendário) · [`docs/REALTIME.md`](docs/REALTIME.md) (painel em tempo real e trading manual) · [`docs/EXCHANGES.md`](docs/EXCHANGES.md) (adaptadores de exchange, viabilidade e prioridades)
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) (go-live, incidentes, backups, monitor externo) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/ALERTS.md`](docs/ALERTS.md) (alertas via WhatsApp) · [`docs/STRATEGIES.md`](docs/STRATEGIES.md) (estratégias e scanner) · [`docs/NEWS.md`](docs/NEWS.md) (notícias, sentimento e calendário) · [`docs/REALTIME.md`](docs/REALTIME.md) (painel em tempo real e trading manual) · [`docs/EXCHANGES.md`](docs/EXCHANGES.md) (adaptadores de exchange, viabilidade e prioridades)
 - [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) — guia para usar agentes de IA (Claude Code, Cursor, Copilot, Aider) e prompts para as etapas restantes; regras em [`AGENTS.md`](AGENTS.md)
 
 ## Segurança

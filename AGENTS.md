@@ -11,7 +11,7 @@ commit: **inglês** (Conventional Commits: `feat(api): ...`, `fix(risk): ...`, `
 ## Stack
 - **Backend** (`backend/`): Python 3.12, FastAPI, SQLAlchemy 2.0 assíncrono, Alembic, Pydantic v2,
   Celery (worker + beat) com Redis 7, PostgreSQL 15, httpx, websockets.
-- **Frontend** (`frontend/`): Next.js 14 (App Router), TypeScript, Tailwind, componentes shadcn/ui (Radix), Recharts.
+- **Frontend** (`frontend/`): Next.js 16 (App Router) + React 19, TypeScript, Tailwind, componentes shadcn/ui (Radix), Recharts.
 - **Infra**: Docker Compose (`docker-compose.yml` + `docker-compose.prod.yml`), Caddy, `scripts/deploy.sh`.
 
 ## Onde fica cada coisa
@@ -19,7 +19,7 @@ commit: **inglês** (Conventional Commits: `feat(api): ...`, `fix(risk): ...`, `
 |---|---|
 | Configuração (env vars) | `backend/app/core/config.py` (+ `.env.example` na raiz) |
 | Banco / sessões | `backend/app/core/database.py`, modelos em `backend/app/models/` |
-| Migrações | `backend/alembic/versions/` (head atual: `0007_performance_indexes.py`) |
+| Migrações | `backend/alembic/versions/` (head atual: `0012_account_capital_cap_and_transfers.py` — confira com `alembic heads`; nova migração usa o próximo número livre) |
 | Segurança (JWT, AES-GCM, papéis) | `backend/app/core/security.py`, `backend/app/api/deps.py` |
 | Rotas da API (`/api/v1`) | `backend/app/api/v1/endpoints/` e `backend/app/api/v1/router.py` |
 | Schemas | `backend/app/schemas/` |

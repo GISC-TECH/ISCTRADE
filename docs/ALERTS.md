@@ -49,7 +49,12 @@ evento (auditoria / WebSocket / Celery / beat)
 | `news_high_impact` — notícia de alto impacto em símbolo operado | ⚠️ aviso | ligado | `news.ingest` ([NEWS.md](NEWS.md)); uma vez por notícia, só para workspaces expostos ao símbolo |
 | `economic_event` — evento econômico de alto impacto em breve | ℹ️ info | ligado | beat `calendar.alerts` (`ECON_ALERT_LEAD_MINUTES` antes) |
 | `bot_event_pause` — bot pausou novas entradas por evento | ℹ️ info | ligado | `bot.event_pause` |
+| `infra_alert` — alerta do Prometheus/Alertmanager (serviço fora, dados parados, bots sem tick, ban Binance, disco...) e sua resolução ✅ | conforme a regra (critical/warning) | ligado | `POST /api/v1/monitoring/alertmanager` ([RUNBOOK.md](RUNBOOK.md), `infra/monitoring/README.md`) |
 | `manual_action` — ação manual de trading (ordem, fechar, fechar todas, cancelar, alavancagem, tentativa bloqueada por kill switch) | ℹ️ info / ⚠️ aviso se rejeitada ou bloqueada | ligado | `manual.*` ([REALTIME.md](REALTIME.md)) |
+
+> Os alertas acima são gerados pelo próprio backend/workers. Para falhas que derrubam o backend (host, Redis,
+> beat), use também as regras do Prometheus + Alertmanager (perfil `monitoring`, com webhook externo) e um
+> *dead man's switch* externo (`DEADMAN_PING_URL`) — veja [RUNBOOK.md §Monitor externo](RUNBOOK.md#monitor-externo).
 
 Exemplo de mensagem:
 

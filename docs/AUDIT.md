@@ -18,7 +18,7 @@ Legenda de status: **Corrigido** (com testes, em `main`) · **Pendente** (docume
 | 5 | Alta | IP do cliente lido de `X-Forwarded-For` sem validação: qualquer um contornava o rate limit de login forjando o cabeçalho. Agora só proxies em `TRUSTED_PROXIES` são considerados (hop mais à direita não confiável). | `core/rate_limiting.py`, `core/config.py` | Corrigido |
 | 6 | Alta | Login sem bloqueio por e-mail (força bruta distribuída por IPs) e com diferença de tempo que revelava se o e-mail existia. Adicionados limite por e-mail (`LOGIN_FAILURES_PER_EMAIL`, janela de 15 min) e hash bcrypt fictício. | `api/v1/endpoints/auth.py` | Corrigido |
 | 7 | Alta | RBAC: qualquer membro do workspace podia afrouxar limites de risco da conta ou trocar testnet → mainnet. Agora exige admin do workspace. | `api/v1/endpoints/accounts.py` | Corrigido |
-| 8 | Alta | Dependências com CVEs conhecidas (backend) | `backend/requirements*.txt` / `pyproject` | Corrigido (pip-audit limpo) |
+| 8 | Alta | Dependências com CVEs conhecidas (backend) | `backend/requirements*.txt` / `pyproject` | Corrigido (pip-audit limpo; reaberto em 2026-10 por PYSEC-2026-107 no `orjson` 3.11.5 e corrigido com `orjson` 3.11.9 — GAPS G-24) |
 | 9 | Média | XSS por link `javascript:` em notícias (URL vinda de feeds/RSS renderizada em `href`). Validação no backend (`safe_url`) e no frontend (`safeHref`). | `news/sources.py`, `frontend/lib/utils.ts`, `frontend/app/dashboard/news/page.tsx` | Corrigido |
 | 10 | Média | Ausência de CSP, Permissions-Policy e COOP no proxy. | `Caddyfile` | Corrigido |
 | 11 | Média | Regra de margem do RiskManager ignorava a margem já usada pelas posições abertas. | `services/risk_manager.py`, `services/execution.py` | Corrigido |
@@ -38,8 +38,14 @@ Legenda de status: **Corrigido** (com testes, em `main`) · **Pendente** (docume
 
 ## 2. Dependências e código suspeito
 
-- `pip-audit` (backend) sem vulnerabilidades após as atualizações; FastAPI fixado em 0.158 (com ajuste de teste).
-- `npm audit`: resta apenas o item 24 acima (build-time, Tailwind 3); Next.js 16.4.2 e React 19 sem achados.
+- `pip-audit -r backend/requirements.txt` (2026-10-22): **sem vulnerabilidades conhecidas** após `orjson` 3.11.5 → 3.11.9
+  (PYSEC-2026-107, corrigido em 3.11.6). FastAPI fixado em 0.158 (com ajuste de teste). O CI (`docs/ci/ci.yml`) roda
+  `pip-audit` a cada push.
+- `npm audit` (2026-10-22): 9 achados (7 high, 2 moderate), **todos** na cadeia do Tailwind 3 (`braces`, `micromatch`,
+  `chokidar`, `fast-glob`, `postcss-selector-parser`, `postcss-nested`) — item 24; `npm audit --omit=dev` mostra 7
+  porque `tailwindcss-animate` declara o Tailwind como *peer*. São usados só no `next build` (o runtime *standalone*
+  não os inclui); `braces` não tem versão corrigida, a saída é migrar para o Tailwind 4 (GAPS G-25). Next.js 16.4.2 e
+  React 19 sem achados. O CI roda `npm audit --omit=dev --audit-level=critical` (subir para `high` após G-25).
 - `package-lock.json` resolve **somente** de `registry.npmjs.org`; nenhum pacote de origem git/URL.
 - Único `postinstall` relevante: `unrs-resolver` (dependência legítima de `eslint-config-next`, baixa binário nativo do próprio pacote npm).
 - Nenhum código ofuscado, `eval` de conteúdo remoto, beacon/telemetria oculta ou envio de chaves para terceiros foi encontrado.

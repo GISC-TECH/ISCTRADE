@@ -91,12 +91,15 @@ Toda linha de `audit_logs` é **selada** em uma cadeia de hashes (`app/services/
   superusuário do PostgreSQL pode desativar o trigger — a proteção real é o HMAC + âncora externa.
 
 ## Resposta a incidentes (runbook resumido)
+Procedimentos completos (go-live, alertas, backups/restauração, monitor externo, simulado do kill switch):
+[RUNBOOK.md](RUNBOOK.md).
+
 1. **Pare novas ordens**: ative o kill switch global no painel Admin (ou `POST /api/v1/admin/kill-switch`).
 2. **Encerre posições** se necessário diretamente na Binance.
 3. **Revogue as chaves de API** na Binance se houver suspeita de vazamento; reconecte com chaves novas depois.
 4. **Revogue sessões**: troque o `JWT_SECRET` e reinicie os serviços.
 5. **Investigue** pela trilha de auditoria (Admin → Auditoria global) e pelos logs (`docker compose logs`).
-6. **Restaure** um backup se houver corrupção de dados (`scripts/backup_db.sh` documenta a restauração).
+6. **Restaure** um backup se houver corrupção de dados (`scripts/restore_db.sh`, veja [RUNBOOK.md](RUNBOOK.md#restauracao)).
 
 ## Limitações conhecidas
 - Sem 2FA no login.
