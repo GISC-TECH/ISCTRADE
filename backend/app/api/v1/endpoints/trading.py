@@ -9,7 +9,7 @@ from app.api.deps import WorkspaceContext, get_workspace_context, require_worksp
 from app.api.v1.endpoints.accounts import get_account_in_workspace
 from app.core.database import get_db
 from app.core.security import Role
-from app.models import OrderType
+from app.models import ExecutionMode, OrderType
 from app.schemas.history import OrderRead
 from app.schemas.trading import (
     CloseAllRequest,
@@ -23,6 +23,7 @@ from app.schemas.trading import (
 from app.services import manual_trading
 from app.services.execution import ExecutionResult, is_global_kill_switch_on
 from app.services.manual_trading import ManualOrderRequest, ManualTradingError
+from app.services.mfa import require_live_mfa
 
 router = APIRouter()
 
@@ -74,6 +75,8 @@ async def place_order(
     """Ordem manual MARKET/LIMIT com stop loss obrigatório e take profit opcional."""
     _confirm(data.confirm)
     account = await get_account_in_workspace(data.account_id, ctx, db)
+    if account.execution_mode == ExecutionMode.LIVE:
+        require_live_mfa(ctx.user)  # closing/cancelling stays allowed (risk-reducing)
     req = ManualOrderRequest(
         symbol=data.symbol, side=data.side, type=OrderType(data.type), quantity=data.quantity,
         stop_loss=data.stop_loss, price=data.price, take_profit=data.take_profit, leverage=data.leverage,
@@ -131,5 +134,7 @@ async def set_leverage(
 ):
     _confirm(data.confirm)
     account = await get_account_in_workspace(data.account_id, ctx, db)
+    if account.execution_mode == ExecutionMode.LIVE:
+        require_live_mfa(ctx.user)
     lev = await _run(db, manual_trading.set_leverage(db, account, data.symbol, data.leverage, ctx.user.id))
     return {"symbol": data.symbol, "leverage": lev}

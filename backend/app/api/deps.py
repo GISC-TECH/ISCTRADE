@@ -14,12 +14,13 @@ from app.core.database import get_db
 from app.core.security import Role, TokenError, has_role, verify_token
 from app.models.user import User
 from app.models.workspace import Workspace, WorkspaceMember
+from app.services.mfa import enforce_enrollment, require_admin_mfa
 
 ACCESS_COOKIE_NAME = "access_token"
 _bearer = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
+async def get_current_user_base(
     db: AsyncSession = Depends(get_db),
     access_token: str | None = Cookie(default=None, alias=ACCESS_COOKIE_NAME),
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
@@ -40,9 +41,18 @@ async def get_current_user(
     return user
 
 
+async def get_current_user(user: User = Depends(get_current_user_base), db: AsyncSession = Depends(get_db)) -> User:
+    """Authenticated user, blocked (403 + X-MFA-Enrollment-Required) when 2FA is mandatory and not enrolled.
+
+    Only the auth/2FA enrolment endpoints use ``get_current_user_base`` directly."""
+    await enforce_enrollment(db, user)
+    return user
+
+
 async def require_superadmin(user: User = Depends(get_current_user)) -> User:
     if user.role != Role.ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acesso restrito a administradores")
+    require_admin_mfa(user)
     return user
 
 

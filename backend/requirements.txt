@@ -18,3 +18,4 @@ websockets==14.1
 prometheus-client==0.21.1
 defusedxml==0.7.1
 orjson==3.11.5
+qrcode==8.2  # TOTP enrolment QR code (pure Python SVG, no Pillow)

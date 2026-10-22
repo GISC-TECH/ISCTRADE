@@ -14,6 +14,7 @@ from app.schemas.bot import BotCreate, BotRead, BotUpdate
 from app.services.audit import log_event
 from app.services.dispatch import enqueue
 from app.services.execution import is_global_kill_switch_on
+from app.services.mfa import require_live_mfa
 from app.strategy.base import StrategyParamError
 from app.strategy.state_machine import ACTIVE_STATES, BotStateMachine, InvalidTransition
 from app.strategy.strategies import get_strategy_class
@@ -140,6 +141,8 @@ async def _transition(bot_id, ctx, db, action: str) -> BotConfig:
                 raise HTTPException(status.HTTP_409_CONFLICT, detail="Kill switch global ativo")
             if account.execution_mode == ExecutionMode.LIVE and not settings.LIVE_TRADING_ENABLED:
                 raise HTTPException(status.HTTP_409_CONFLICT, detail="Trading real desabilitado no servidor")
+            if account.execution_mode == ExecutionMode.LIVE:
+                require_live_mfa(ctx.user)
             if not bot.is_enabled:
                 raise HTTPException(status.HTTP_409_CONFLICT, detail="Bot desabilitado")
             bot.state = sm.start()

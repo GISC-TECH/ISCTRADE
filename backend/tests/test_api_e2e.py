@@ -4,6 +4,7 @@ from decimal import Decimal as D
 
 from sqlalchemy import select
 
+from app.core import totp
 from app.models import Account, ExecutionMode, User
 from app.models.enums import OrderSide
 from app.services.execution import OrderService, PaperExecutor
@@ -24,6 +25,17 @@ async def register_login(client, email: str) -> dict:
 
 def bearer(login: dict) -> dict:
     return {"Authorization": f"Bearer {login['access_token']}"}
+
+
+async def enable_totp(client, headers: dict) -> str:
+    """Enrol TOTP 2FA through the API (required for /admin and live actions). Returns the secret."""
+    r = await client.post("/api/v1/auth/2fa/setup", headers=headers)
+    assert r.status_code == 200, r.text
+    secret = r.json()["secret"]
+    r = await client.post("/api/v1/auth/2fa/enable", json={"code": totp.code_at(secret, totp.current_step())},
+                          headers=headers)  # fmt: skip
+    assert r.status_code == 200, r.text
+    return secret
 
 
 async def test_register_login_me_refresh_logout(client) -> None:
@@ -204,6 +216,9 @@ async def test_admin_endpoints_and_global_kill_switch(client, db) -> None:
     user = bearer(await register_login(client, "user@example.com"))
     client.cookies.clear()
     assert (await client.get("/api/v1/admin/stats", headers=user)).status_code == 403
+    r = await client.get("/api/v1/admin/stats", headers=admin)  # super-admin needs 2FA for /admin
+    assert r.status_code == 403 and r.headers["x-mfa-enrollment-required"] == "admin"
+    await enable_totp(client, admin)
     stats = (await client.get("/api/v1/admin/stats", headers=admin)).json()
     assert stats["users"] == 2 and stats["global_kill_switch"]["active"] is False
 
@@ -244,11 +259,11 @@ async def test_admin_endpoints_and_global_kill_switch(client, db) -> None:
 
 async def test_live_mode_requires_workspace_admin_and_server_flag(client) -> None:
     h = bearer(await register_login(client, "live@example.com"))
-    r = await client.post(
-        "/api/v1/accounts/",
-        json={"label": "L", "api_key": "placeholder-key-0003", "api_secret": "placeholder-secret-0003",
-              "execution_mode": "live"},
-        headers=h,
-    )  # fmt: skip
+    body = {"label": "L", "api_key": "placeholder-key-0003", "api_secret": "placeholder-secret-0003",
+            "execution_mode": "live"}  # fmt: skip
+    r = await client.post("/api/v1/accounts/", json=body, headers=h)
+    assert r.status_code == 403 and "2FA" in r.json()["detail"]  # live accounts need 2FA enrolled
+    await enable_totp(client, h)
+    r = await client.post("/api/v1/accounts/", json=body, headers=h)
     assert r.status_code == 201 and r.json()["execution_mode"] == ExecutionMode.LIVE.value
     assert (await client.post(f"/api/v1/accounts/{r.json()['id']}/start", headers=h)).status_code == 409

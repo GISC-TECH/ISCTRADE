@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import Pagination, pagination, require_superadmin
 from app.api.v1.endpoints.history import paginate
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import Role
 from app.models import (
@@ -26,6 +27,7 @@ from app.schemas.user import AdminUserUpdate, UserRead
 from app.services import audit_chain
 from app.services.audit import log_event
 from app.services.kill_switch import get_global_kill_switch, set_global_kill_switch
+from app.services.mfa import clear_mfa, get_security_policy, set_security_policy
 
 router = APIRouter()
 
@@ -33,6 +35,16 @@ router = APIRouter()
 class KillSwitchIn(BaseModel):
     active: bool
     reason: str | None = Field(None, max_length=255)
+
+
+class SecurityPolicy(BaseModel):
+    require_2fa_all: bool
+
+
+class SecurityPolicyOut(SecurityPolicy):
+    totp_required_for_live: bool
+    totp_required_for_admins: bool
+    live_trading_enabled: bool
 
 
 class AdminWorkspace(BaseModel):
@@ -181,3 +193,46 @@ async def verify_audit_chain(
     anchor = (anchor_seq, anchor_hash) if anchor_seq is not None and anchor_hash is not None else None
     report = await audit_chain.verify_chain(db, expected_head=anchor)
     return report.as_dict()
+
+
+def _policy_out(policy: dict) -> SecurityPolicyOut:
+    return SecurityPolicyOut(
+        require_2fa_all=policy["require_2fa_all"],
+        totp_required_for_live=settings.TOTP_REQUIRED_FOR_LIVE,
+        totp_required_for_admins=settings.TOTP_REQUIRED_FOR_ADMINS,
+        live_trading_enabled=settings.LIVE_TRADING_ENABLED,
+    )
+
+
+@router.get("/security-policy", response_model=SecurityPolicyOut)
+async def get_policy(admin: User = Depends(require_superadmin), db: AsyncSession = Depends(get_db)):
+    return _policy_out(await get_security_policy(db))
+
+
+@router.put("/security-policy", response_model=SecurityPolicyOut)
+async def update_policy(
+    data: SecurityPolicy, admin: User = Depends(require_superadmin), db: AsyncSession = Depends(get_db)
+):
+    """Exigir 2FA de todos os usuários (quem não tiver ativado fica restrito à página Segurança)."""
+    policy = await set_security_policy(db, data.require_2fa_all)
+    await log_event(db, "admin.security_policy_updated", level="warning", user_id=admin.id, **policy)
+    await db.commit()
+    return _policy_out(policy)
+
+
+@router.post("/users/{user_id}/reset-2fa", response_model=UserRead)
+async def reset_user_2fa(
+    user_id: uuid.UUID, admin: User = Depends(require_superadmin), db: AsyncSession = Depends(get_db)
+):
+    """Remove o 2FA de um usuário que perdeu o autenticador e os códigos (encerra as sessões dele)."""
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado")
+    if user.id == admin.id:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Use a página Segurança para alterar o seu próprio 2FA")
+    clear_mfa(user)
+    user.token_version += 1
+    await log_event(db, "admin.user_2fa_reset", level="critical", user_id=admin.id, target=user.email)
+    await db.commit()
+    await db.refresh(user)
+    return user

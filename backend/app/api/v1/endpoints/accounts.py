@@ -27,6 +27,7 @@ from app.services.dashboard import build_dashboard
 from app.services.dispatch import enqueue
 from app.services.execution import is_global_kill_switch_on
 from app.services.kill_switch import reset_account_kill_switch
+from app.services.mfa import require_live_mfa
 from app.services.position_mode import HEDGE_MODE_MESSAGE
 from app.strategy.state_machine import ACTIVE_STATES
 
@@ -101,6 +102,8 @@ async def connect_account(
 ) -> Account:
     """Conecta uma conta Binance. As chaves são criptografadas (AES-256-GCM) antes de salvar."""
     _check_live_allowed(data.execution_mode, ctx)
+    if data.execution_mode == ExecutionMode.LIVE:
+        require_live_mfa(ctx.user)
     _check_risk_limits(ctx, data.model_dump(), _default_risk_limits())
     aad = str(ctx.workspace.id).encode()  # bind ciphertext to the tenant
     account = Account(
@@ -150,6 +153,8 @@ async def update_account(
     if ("execution_mode" in changes or "is_testnet" in changes) and account.status == AccountStatus.RUNNING:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Pare a conta antes de mudar o modo de execução")
     _check_live_allowed(changes.get("execution_mode"), ctx)
+    if changes.get("execution_mode") == ExecutionMode.LIVE:
+        require_live_mfa(ctx.user)
     _check_risk_limits(ctx, changes, {f: getattr(account, f) for f in RISK_FIELDS})
     if "is_testnet" in changes and changes["is_testnet"] is False and account.is_testnet:
         ctx.require(Role.ADMIN)  # testnet -> mainnet
@@ -229,6 +234,8 @@ async def start_account(
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Kill switch global ativo")
     if account.execution_mode == ExecutionMode.LIVE and not settings.LIVE_TRADING_ENABLED:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Trading real desabilitado no servidor")
+    if account.execution_mode == ExecutionMode.LIVE:
+        require_live_mfa(ctx.user)
     account.status = AccountStatus.RUNNING
     account.status_reason = None
     started: list[str] = []

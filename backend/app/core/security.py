@@ -18,6 +18,7 @@ from app.core.config import settings
 
 ACCESS_TOKEN_TYPE = "access"
 REFRESH_TOKEN_TYPE = "refresh"
+MFA_TOKEN_TYPE = "mfa"  # short-lived login step-up token (password ok, TOTP pending)
 _NONCE_SIZE = 12  # 96-bit nonce recommended for GCM
 
 
@@ -71,6 +72,10 @@ def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> st
 
 def create_refresh_token(subject: str, extra: dict[str, Any] | None = None) -> str:
     return _create_token(subject, REFRESH_TOKEN_TYPE, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS), extra)
+
+
+def create_mfa_token(subject: str, extra: dict[str, Any] | None = None) -> str:
+    return _create_token(subject, MFA_TOKEN_TYPE, timedelta(minutes=settings.TOTP_CHALLENGE_MINUTES), extra)
 
 
 def verify_token(token: str, expected_type: str = ACCESS_TOKEN_TYPE) -> dict[str, Any]:

@@ -53,6 +53,13 @@ class Settings(BaseSettings):
         "192.168.0.0/16",
     ]
     REGISTER_RATE_LIMIT_PER_MINUTE: int = 5
+    # TOTP 2FA. Live trading actions (live account create/switch/start, manual live orders) require 2FA enrolled;
+    # platform super-admins need it for /admin. Admins can additionally require 2FA for every user (Admin page).
+    TOTP_ISSUER: str = "ISCTRADE"
+    TOTP_REQUIRED_FOR_LIVE: bool = True
+    TOTP_REQUIRED_FOR_ADMINS: bool = True
+    TOTP_MAX_FAILURES: int = 5  # wrong codes per user per 15 min before 429
+    TOTP_CHALLENGE_MINUTES: int = 5  # validity of the login step-up token
 
     # Encryption of exchange credentials (base64-encoded 32 bytes => AES-256)
     MASTER_ENCRYPTION_KEY: str = "CHANGE_ME"
