@@ -123,6 +123,18 @@ class DatabaseCollector:
             "btp_bot_last_tick_age_seconds", "Seconds since the last completed bot tick (-1 = never)",
             value=-1 if age is None else age,
         )  # fmt: skip
+        g = GaugeMetricFamily(
+            "btp_positions_unprotected",
+            "Live positions without a protective stop at the exchange (stop guard, G-01); 0 = account guarded",
+            labels=["account_id", "workspace_id", "symbol"],
+        )
+        for row in snap.get("positions_unprotected", []):
+            if row["symbols"]:
+                for symbol in row["symbols"]:
+                    g.add_metric([row["account_id"], row["workspace_id"], symbol], 1)
+            else:
+                g.add_metric([row["account_id"], row["workspace_id"], ""], 0)
+        yield g
         g = GaugeMetricFamily("btp_alerts_last_24h", "Alerts recorded in the last 24h", labels=["status"])
         for status, n in snap.get("alerts_24h", {}).items():
             g.add_metric([status], n)

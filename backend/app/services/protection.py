@@ -31,10 +31,12 @@ from app.core.config import settings
 from app.exchanges.base import ExchangeAdapter
 from app.models import Account, Order, OrderSide, OrderType, Position
 from app.models.base import utcnow
+from app.models.system import SystemSetting
 from app.services.audit import log_event
 
 logger = logging.getLogger(__name__)
 
+STATUS_KEY_PREFIX = "protection:"  # system_settings row per live account (read by /metrics)
 STOP_TYPES = frozenset({"STOP_MARKET", "STOP", "TRAILING_STOP_MARKET"})
 ACTIVE = frozenset({"NEW", "PARTIALLY_FILLED", "PENDING"})
 
@@ -89,6 +91,7 @@ class GuardSummary:
     closed: int = 0
     skipped: int = 0
     details: list[dict] = field(default_factory=list)
+    unprotected_symbols: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -105,6 +108,26 @@ class ProtectionGuard:
         summary = GuardSummary()
         if not settings.PROTECTION_GUARD_ENABLED:
             return summary
+        try:
+            return await self._run(summary, remote_positions)
+        finally:
+            await self._save_status(summary)
+
+    async def _save_status(self, summary: GuardSummary) -> None:
+        """Persist the unprotected positions of the account: gauge ``btp_positions_unprotected`` on the API."""
+        key = f"{STATUS_KEY_PREFIX}{self.account.id}"
+        value = {
+            "workspace_id": str(self.account.workspace_id),
+            "unprotected": sorted(set(summary.unprotected_symbols)),
+            "checked_at": utcnow().isoformat(),
+        }
+        row = await self.db.get(SystemSetting, key)
+        if row is None:
+            self.db.add(SystemSetting(key=key, value=value))
+        else:
+            row.value = value
+
+    async def _run(self, summary: GuardSummary, remote_positions: list[dict] | None) -> GuardSummary:
         if remote_positions is None:
             remote_positions = await self.client.get_positions()
         positions = [
@@ -303,6 +326,7 @@ class ProtectionGuard:
         stop: Decimal | None = None,
     ) -> None:  # fmt: skip
         summary.unprotected += 1
+        summary.unprotected_symbols.append(str(p.get("symbol")))
         qty = _dec(p.get("positionAmt"))
         logger.critical("UNPROTECTED POSITION account=%s %s %s: %s", self.account.id, p.get("symbol"), qty, reason)
         await log_event(

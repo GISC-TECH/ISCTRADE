@@ -9,10 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Account, BotConfig, Position
+from app.models.system import SystemSetting
 from app.services.alerts.service import recent_alert_counts
 from app.services.execution import is_global_kill_switch_on
 from app.services.health import key_age, streams_heartbeat_age
 from app.services.heartbeats import BEAT_KEY, BOT_TICK_KEY, WORKER_QUEUES, worker_key
+from app.services.protection import STATUS_KEY_PREFIX as PROTECTION_PREFIX
 
 
 def _f(v: Any) -> float | None:
@@ -45,7 +47,15 @@ async def collect(db: AsyncSession) -> dict[str, Any]:
             "equity": _f(equity), "daily_pnl": _f(daily), "drawdown_pct": _f(dd),
             "open_positions": positions.get(acc.id, 0),
         })  # fmt: skip
+    unprotected = []
+    for row in await db.scalars(select(SystemSetting).where(SystemSetting.key.startswith(PROTECTION_PREFIX))):
+        value = row.value or {}
+        unprotected.append({
+            "account_id": row.key[len(PROTECTION_PREFIX):], "workspace_id": str(value.get("workspace_id") or ""),
+            "symbols": list(value.get("unprotected") or []),
+        })  # fmt: skip
     return {
+        "positions_unprotected": unprotected,
         "bots": bots,
         "accounts": accounts,
         "account_rows": rows,

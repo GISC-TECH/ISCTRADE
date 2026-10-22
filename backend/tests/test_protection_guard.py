@@ -348,3 +348,29 @@ async def test_starting_live_bot_is_prepared_on_tick(db, live_on, monkeypatch) -
     assert prepared == [bot.id] and result["status"] == "error"
     await db.refresh(bot)
     assert bot.state == BotState.ERROR and "exchange down" in bot.last_error
+
+
+async def test_unprotected_gauge_for_prometheus(db, live_on) -> None:
+    """Gauge btp_positions_unprotected (Prometheus rule UnprotectedPosition), labeled by account/symbol."""
+    from app.core import metrics
+    from app.services.metrics_snapshot import collect
+
+    acc = await _live_account(db)
+    await ProtectionGuard(db, acc, FakeExchange([position()], [], fail_stop=True)).run()
+    ok = await _live_account(db)
+    await ProtectionGuard(db, ok, FakeExchange([position()], [stop_order()])).run()
+    await db.commit()
+    snap = await collect(db)
+    metrics.DB_COLLECTOR.snapshot = snap
+    try:
+        (family,) = [f for f in metrics.DB_COLLECTOR.collect() if f.name == "btp_positions_unprotected"]
+    finally:
+        metrics.DB_COLLECTOR.snapshot = {}
+    samples = {(s.labels["account_id"], s.labels["symbol"]): s.value for s in family.samples}
+    assert samples == {(str(acc.id), "BTCUSDT"): 1, (str(ok.id), ""): 0}
+
+    # once the stop is back, the account reports 0 again
+    await ProtectionGuard(db, acc, FakeExchange([position()], [stop_order()])).run()
+    await db.commit()
+    rows = {r["account_id"]: r["symbols"] for r in (await collect(db))["positions_unprotected"]}
+    assert rows[str(acc.id)] == []
