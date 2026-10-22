@@ -221,7 +221,8 @@ services:
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: ["CMD", "/opt/isctrade/healthcheck.sh"]
+      # PING autenticado (senha via REDISCLI_AUTH, fora da linha de comando); exige PONG, não só exit 0.
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then export REDISCLI_AUTH=\"$$REDIS_PASSWORD\"; fi; redis-cli --no-auth-warning $${REDIS_USERNAME:+--user \"$$REDIS_USERNAME\"} ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
