@@ -23,6 +23,7 @@ const nav = [
   { href: "/dashboard/accounts", label: "Contas" },
   { href: "/dashboard/bots", label: "Bots" },
   { href: "/dashboard/strategies", label: "Estratégias & Backtest" },
+  { href: "/dashboard/presets", label: "Presets de bots" },
   { href: "/dashboard/scanner", label: "Scanner" },
   { href: "/dashboard/news", label: "Notícias" },
   { href: "/dashboard/calendar", label: "Calendário" },

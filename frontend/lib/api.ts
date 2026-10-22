@@ -17,6 +17,7 @@ import type {
   Bot,
   BotOptions,
   BotPreset,
+  PresetWrite,
   Candle,
   CloseAllResult,
   EconomicEvent,
@@ -170,7 +171,7 @@ const del = (path: string) => request<void>(path, { method: "DELETE" });
 export const api = {
   // auth
   register: (email: string, password: string, full_name?: string) =>
-    post<User>("/auth/register", { email, password, full_name }),
+    post<TokenResponse>("/auth/register", { email, password, full_name }), // also signs in (cookies)
   login: (email: string, password: string) => post<TokenResponse | MfaChallenge>("/auth/login", { email, password }),
   login2fa: (mfa_token: string, code: string) => post<TokenResponse>("/auth/login/2fa", { mfa_token, code }),
   acceptDisclaimer: (version: string) => post<User>("/auth/me/disclaimer", { version }),
@@ -237,6 +238,12 @@ export const api = {
   // strategies / backtests
   listStrategies: () => request<StrategyInfo[]>("/strategies/"),
   listPresets: () => request<BotPreset[]>("/strategies/presets"),
+  createPreset: (data: PresetWrite) => post<BotPreset>("/strategies/presets", data),
+  clonePreset: (source_key: string, name?: string) =>
+    post<BotPreset>("/strategies/presets/clone", { source_key, name }),
+  updatePreset: (id: string, data: Partial<Omit<PresetWrite, "strategy_key">>) =>
+    patch<BotPreset>(`/strategies/presets/${id}`, data),
+  deletePreset: (id: string) => del(`/strategies/presets/${id}`),
   runBacktest: (data: BacktestRequest) => post<BacktestRun>("/strategies/backtest", data),
   runWalkForward: (data: WalkForwardRequest) => post<BacktestRun>("/strategies/walk-forward", data),
   listBacktests: () => request<BacktestRun[]>("/strategies/backtests"),

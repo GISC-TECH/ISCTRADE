@@ -22,17 +22,30 @@ export function PresetPicker({
   label?: string;
 }) {
   const selected = presets.find((p) => p.key === value);
+  const custom = presets.filter((p) => p.source === "custom");
+  const builtin = presets.filter((p) => p.source !== "custom");
   if (!presets.length) return null;
   return (
     <div className="space-y-1">
       <Label htmlFor={id}>{label}</Label>
       <Select id={id} value={value} onChange={(e) => onChange(presets.find((p) => p.key === e.target.value) ?? null)}>
         <option value="">Configuração manual</option>
-        {presets.map((p) => (
-          <option key={p.key} value={p.key}>
-            {p.name}
-          </option>
-        ))}
+        {custom.length > 0 && (
+          <optgroup label="Personalizados do workspace">
+            {custom.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.name}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        <optgroup label="Robôs prontos">
+          {builtin.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.name}
+            </option>
+          ))}
+        </optgroup>
       </Select>
       {selected && (
         <div className="space-y-1 rounded-md border p-2 text-xs text-muted-foreground">

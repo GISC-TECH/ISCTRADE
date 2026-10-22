@@ -19,7 +19,7 @@ commit: **inglês** (Conventional Commits: `feat(api): ...`, `fix(risk): ...`, `
 |---|---|
 | Configuração (env vars) | `backend/app/core/config.py` (+ `.env.example` na raiz) |
 | Banco / sessões | `backend/app/core/database.py`, modelos em `backend/app/models/` |
-| Migrações | `backend/alembic/versions/` (head atual: `0012_account_capital_cap_and_transfers.py` — confira com `alembic heads`; nova migração usa o próximo número livre) |
+| Migrações | `backend/alembic/versions/` (head atual: `0014_custom_bot_presets.py` — confira com `alembic heads`; nova migração usa o próximo número livre) |
 | Segurança (JWT, AES-GCM, papéis) | `backend/app/core/security.py`, `backend/app/api/deps.py` |
 | Rotas da API (`/api/v1`) | `backend/app/api/v1/endpoints/` e `backend/app/api/v1/router.py` |
 | Schemas | `backend/app/schemas/` |

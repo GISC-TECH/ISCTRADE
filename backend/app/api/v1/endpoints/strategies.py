@@ -9,7 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from app.api.deps import get_active_workspace, get_current_user
+from app.api.deps import (
+    WorkspaceContext,
+    get_active_workspace,
+    get_current_user,
+    get_workspace_context,
+    require_workspace_role,
+)
 from app.backtest import archive
 from app.backtest.data import BacktestDataError, fetch_candles, load_csv
 from app.backtest.engine import BacktestConfig, run_backtest
@@ -17,16 +23,18 @@ from app.backtest.funding import FundingEvent, constant_funding, fetch_funding, 
 from app.backtest.walkforward import WalkForwardConfig, WalkForwardError, run_walk_forward
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.security import Role
 from app.exchanges.base import ExchangeAdapter, ExchangeAPIError
 from app.exchanges.registry import public_adapter
-from app.models import BacktestRun, BacktestStatus, User, Workspace
+from app.models import BacktestRun, BacktestStatus, CustomPreset, User, Workspace
 from app.schemas.backtest import BacktestDetail, BacktestRequest, BacktestSummary, WalkForwardRequest
+from app.schemas.preset import PresetClone, PresetCreate, PresetUpdate
+from app.services import presets as preset_service
 from app.services.audit import log_event
 from app.services.news.calendar import load_events
 from app.services.news.gate import GateDecision, aggregate, event_gate, news_gate
 from app.services.news.store import load_signals
 from app.strategy.base import StrategyParamError
-from app.strategy.presets import list_presets
 from app.strategy.strategies import build_strategy, list_strategies
 
 router = APIRouter()
@@ -134,9 +142,132 @@ async def get_strategies(user: User = Depends(get_current_user)) -> list[dict]:
 
 
 @router.get("/presets")
-async def get_presets(user: User = Depends(get_current_user)) -> list[dict]:
-    """Robôs prontos: estratégia + timeframe + parâmetros + opções de risco/notícias (sempre em modo paper)."""
-    return list_presets()
+async def get_presets(
+    ctx: WorkspaceContext = Depends(get_workspace_context), db: AsyncSession = Depends(get_db)
+) -> list[dict]:
+    """Presets personalizados do workspace (primeiro) + robôs prontos embutidos. Sempre em modo paper: o modo de
+    execução vem da conta do bot."""
+    return await preset_service.list_all(db, ctx.workspace.id, ctx.user.id, ctx.role)
+
+
+def _preset_http(exc: preset_service.PresetError) -> HTTPException:
+    return HTTPException(exc.status, detail=exc.detail)
+
+
+def _apply_preset_fields(row: CustomPreset, data: dict) -> None:
+    for field_name, value in data.items():
+        if field_name == "options" and value is not None:
+            value = value if isinstance(value, dict) else value.model_dump()
+        setattr(row, field_name, value)
+
+
+@router.post("/presets", status_code=status.HTTP_201_CREATED)
+async def create_preset(
+    data: PresetCreate,
+    ctx: WorkspaceContext = Depends(require_workspace_role(Role.TRADER)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cria um preset personalizado no workspace (trader ou admin)."""
+    try:
+        await preset_service.ensure_capacity(db, ctx.workspace.id)
+        params = preset_service.validate_strategy(data.strategy_key, data.params)
+    except preset_service.PresetError as exc:
+        raise _preset_http(exc) from exc
+    except StrategyParamError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    row = CustomPreset(workspace_id=ctx.workspace.id, created_by=ctx.user.id)
+    _apply_preset_fields(row, {**data.model_dump(), "params": params, "options": data.options.model_dump()})
+    db.add(row)
+    await db.flush()
+    await log_event(
+        db, "preset.created", user_id=ctx.user.id, workspace_id=ctx.workspace.id, preset=str(row.id), name=row.name
+    )
+    await db.commit()
+    await db.refresh(row)
+    return preset_service.custom_as_dict(row, user_id=ctx.user.id, role=ctx.role)
+
+
+@router.post("/presets/clone", status_code=status.HTTP_201_CREATED)
+async def clone_preset(
+    data: PresetClone,
+    ctx: WorkspaceContext = Depends(require_workspace_role(Role.TRADER)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Clona um preset. Clonar um robô pronto embutido (a forma de personalizá-lo) exige admin do workspace."""
+    try:
+        await preset_service.ensure_capacity(db, ctx.workspace.id)
+        fields = await preset_service.source_for_clone(db, ctx.workspace.id, data.source_key, ctx.role)
+    except preset_service.PresetError as exc:
+        raise _preset_http(exc) from exc
+    fields["name"] = (data.name or f"{fields['name']} (cópia)")[:120]
+    row = CustomPreset(workspace_id=ctx.workspace.id, created_by=ctx.user.id, based_on=data.source_key)
+    _apply_preset_fields(row, fields)
+    db.add(row)
+    await db.flush()
+    await log_event(
+        db,
+        "preset.cloned",
+        user_id=ctx.user.id,
+        workspace_id=ctx.workspace.id,
+        preset=str(row.id),
+        source=data.source_key,
+    )
+    await db.commit()
+    await db.refresh(row)
+    return preset_service.custom_as_dict(row, user_id=ctx.user.id, role=ctx.role)
+
+
+@router.patch("/presets/{preset_id}")
+async def update_preset(
+    preset_id: uuid.UUID,
+    data: PresetUpdate,
+    ctx: WorkspaceContext = Depends(require_workspace_role(Role.TRADER)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Edita um preset personalizado (quem criou ou admin do workspace). Robôs prontos não são editáveis: clone."""
+    try:
+        row = await preset_service.get_custom(db, ctx.workspace.id, preset_id)
+        preset_service.ensure_can_edit(row, ctx.user.id, ctx.role)
+    except preset_service.PresetError as exc:
+        raise _preset_http(exc) from exc
+    changes = data.model_dump(exclude_unset=True)
+    for key in [k for k, v in changes.items() if v is None]:
+        changes.pop(key)  # explicit nulls mean "unchanged"
+    if "params" in changes:
+        try:
+            changes["params"] = preset_service.validate_strategy(row.strategy_key, changes["params"])
+        except StrategyParamError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+    _apply_preset_fields(row, changes)
+    await log_event(
+        db,
+        "preset.updated",
+        user_id=ctx.user.id,
+        workspace_id=ctx.workspace.id,
+        preset=str(row.id),
+        fields=sorted(changes),
+    )
+    await db.commit()
+    await db.refresh(row)
+    return preset_service.custom_as_dict(row, user_id=ctx.user.id, role=ctx.role)
+
+
+@router.delete("/presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_preset(
+    preset_id: uuid.UUID,
+    ctx: WorkspaceContext = Depends(require_workspace_role(Role.TRADER)),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    try:
+        row = await preset_service.get_custom(db, ctx.workspace.id, preset_id)
+        preset_service.ensure_can_edit(row, ctx.user.id, ctx.role)
+    except preset_service.PresetError as exc:
+        raise _preset_http(exc) from exc
+    await log_event(
+        db, "preset.deleted", user_id=ctx.user.id, workspace_id=ctx.workspace.id, preset=str(row.id), name=row.name
+    )
+    await db.delete(row)
+    await db.commit()
 
 
 async def build_backtest_gate(db: AsyncSession, req, candles) -> tuple[Any, dict[str, Any]]:

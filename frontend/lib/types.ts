@@ -213,6 +213,29 @@ export interface BotPreset {
   experimental: boolean;
   execution_mode: "paper";
   tags: string[];
+  /** "builtin" = code-defined, read-only (clone to customise); "custom" = saved in this workspace. */
+  source?: "builtin" | "custom";
+  id?: string | null;
+  editable?: boolean;
+  based_on?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export type RiskLevel = BotPreset["risk_level"];
+
+export interface PresetWrite {
+  name: string;
+  description: string;
+  strategy_key: string;
+  interval: string;
+  symbol: string;
+  leverage: number;
+  params: Record<string, unknown>;
+  options: BotOptions;
+  risk_level: RiskLevel;
+  tags: string[];
 }
 
 export interface Bot {

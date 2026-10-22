@@ -26,6 +26,7 @@ EXPECTED_TABLES = {
     "audit_logs",
     "backtest_runs",
     "system_settings",
+    "bot_presets",
 }
 
 
