@@ -16,7 +16,8 @@ services:
     # 2 workers uvicorn: métricas agregadas via PROMETHEUS_MULTIPROC_DIR (recriado a cada start).
     command: >-
       sh -c "rm -rf /tmp/prometheus && mkdir -p /tmp/prometheus &&
-      exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips '*'"
+      exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips '*'
+      --timeout-keep-alive 130"
     volumes: !reset []
     ports: !reset []
     environment:

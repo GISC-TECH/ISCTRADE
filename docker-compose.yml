@@ -88,7 +88,8 @@ services:
 
   backend:
     <<: *backend-common
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # keep-alive above the proxies' idle pools (Next rewrite 5 s, Caddy 2 min): avoids "socket hang up" races
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --timeout-keep-alive 130
     volumes:
       - ./backend:/app
     ports:

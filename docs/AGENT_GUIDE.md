@@ -75,7 +75,7 @@ cd backend
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 alembic upgrade head
-uvicorn app.main:app --reload                               # terminal 1
+uvicorn app.main:app --reload --timeout-keep-alive 130      # terminal 1
 celery -A app.tasks.celery_app worker --loglevel=info       # terminal 2
 celery -A app.tasks.celery_app beat --loglevel=info         # terminal 3
 python -m app.workers.streams                               # terminal 4 (opcional)

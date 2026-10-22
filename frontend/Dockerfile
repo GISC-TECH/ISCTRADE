@@ -24,7 +24,9 @@ RUN npm run build
 # ---- runtime ----
 FROM node:20-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
+# KEEP_ALIVE_TIMEOUT (ms, read by the standalone server): longer than Caddy's 2 min idle upstream pool, so Next never
+# closes a connection Caddy is about to reuse (Node's default is 5 s -> sporadic 502 under light traffic).
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0 KEEP_ALIVE_TIMEOUT=130000
 RUN addgroup -S nodejs && adduser -S nextjs -G nodejs
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
