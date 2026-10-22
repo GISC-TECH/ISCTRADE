@@ -8,7 +8,10 @@ Rules (evaluated in this order):
   4. Leverage limit        - leverage <= min(`max_leverage`, RISK_MAX_LEVERAGE_CAP) and the exchange bracket.
   4b. Liquidation          - the stop must trigger safely before the estimated (isolated) liquidation price.
   5. Max risk per trade    - qty * |entry - stop| <= equity * `max_risk_per_trade_pct` / 100.
-  6. Margin                - notional / leverage + margin already used by open positions <= equity.
+  6. Margin                - notional / leverage + margin already used by open positions <= equity
+                             (equity capped by the live account's hard capital cap).
+  7. Aggregate limits      - `evaluate_aggregate`: workspace/global total notional, daily loss (USDT) and
+                             concurrent positions (computed by app.services.risk_limits).
 Reduce-only orders (closing/de-risking) are always allowed, so positions can be closed
 even when the kill switch is active.
 """
@@ -50,6 +53,32 @@ class AccountRiskState:
     max_daily_loss_pct: Decimal = Decimal("3")
     max_drawdown_pct: Decimal = Decimal("15")
     used_margin: Decimal = Decimal("0")  # initial margin of the open positions (notional / leverage)
+    # Hard capital cap (live accounts): sizing, per-trade risk and margin use min(equity, capital_cap).
+    capital_cap: Decimal | None = None
+
+    @property
+    def sizing_equity(self) -> Decimal:
+        if self.capital_cap is not None and self.capital_cap < self.equity:
+            return max(self.capital_cap, Decimal("0"))
+        return self.equity
+
+
+@dataclass(frozen=True)
+class AggregateExposure:
+    """Exposure of a scope (workspace or whole instance) AFTER the order, and the limits of that scope.
+
+    Limits set to None (or 0) are disabled. `daily_loss` is positive when the scope lost money today.
+    """
+
+    scope: str  # "workspace" | "global"
+    notional: Decimal
+    open_positions: int
+    daily_loss: Decimal
+    max_total_notional: Decimal | None = None
+    max_daily_loss: Decimal | None = None
+    max_open_positions: int | None = None
+    adds_notional: bool = True  # False when the order does not increase the scope's notional
+    opens_position: bool = True  # False when the order adds to (or flips) an existing position
 
 
 @dataclass(frozen=True)
@@ -167,18 +196,45 @@ class RiskManager:
                 )
 
         risk = self.trade_risk(order)
-        max_risk = account.equity * account.max_risk_per_trade_pct / Decimal(100)
+        equity = account.sizing_equity
+        max_risk = equity * account.max_risk_per_trade_pct / Decimal(100)
         if risk > max_risk:
             return RiskDecision(False, f"max_risk_per_trade: risk {risk:.2f} > allowed {max_risk:.2f} USDT")
 
         margin = order.quantity * order.entry_price / Decimal(order.leverage)
-        if margin + account.used_margin > account.equity:
+        if margin + account.used_margin > equity:
+            capped = " (capital cap)" if equity < account.equity else ""
             return RiskDecision(
                 False,
                 f"insufficient_margin: required {margin:.2f} + in use {account.used_margin:.2f}"
-                f" > equity {account.equity:.2f} USDT",
+                f" > equity {equity:.2f} USDT{capped}",
             )
 
+        return RiskDecision(True, self.OK)
+
+    def evaluate_aggregate(self, order: OrderRequest, exposures: list[AggregateExposure]) -> RiskDecision:
+        """Workspace/global caps (total notional, daily loss in USDT, concurrent positions). Reduce-only passes."""
+        if order.reduce_only:
+            return RiskDecision(True, self.OK)
+        for exp in exposures:
+            if exp.max_daily_loss and exp.daily_loss >= exp.max_daily_loss:
+                return RiskDecision(
+                    False,
+                    f"aggregate_daily_loss: {exp.scope} lost {exp.daily_loss:.2f} today >= {exp.max_daily_loss:.2f}"
+                    " USDT",
+                )
+            if exp.max_total_notional and exp.adds_notional and exp.notional > exp.max_total_notional:
+                return RiskDecision(
+                    False,
+                    f"aggregate_notional: {exp.scope} exposure {exp.notional:.2f} > {exp.max_total_notional:.2f}"
+                    " USDT",
+                )
+            if exp.max_open_positions and exp.opens_position and exp.open_positions > exp.max_open_positions:
+                return RiskDecision(
+                    False,
+                    f"aggregate_positions: {exp.scope} would hold {exp.open_positions} positions"
+                    f" > {exp.max_open_positions}",
+                )
         return RiskDecision(True, self.OK)
 
     @classmethod
@@ -203,4 +259,4 @@ class RiskManager:
         distance = abs(entry_price - stop_loss)
         if distance == 0:
             return Decimal(0)
-        return account.equity * account.max_risk_per_trade_pct / Decimal(100) / distance
+        return account.sizing_equity * account.max_risk_per_trade_pct / Decimal(100) / distance

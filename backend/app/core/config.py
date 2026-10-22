@@ -232,6 +232,18 @@ class Settings(BaseSettings):
     # Maintenance margin rate used when the exchange brackets are unavailable (paper, adapters without brackets).
     RISK_DEFAULT_MAINT_MARGIN_RATE: float = Field(0.01, ge=0, lt=1)
     LEVERAGE_BRACKETS_CACHE_SECONDS: int = 3600
+    # Aggregate limits (bots AND manual orders, enforced by the RiskManager). 0 = no limit. Workspace values
+    # are defaults/ceilings: a workspace admin may tighten them (or restore up to these), only the platform
+    # super-admin may go above. Global limits sum every workspace of the instance (super-admin only).
+    RISK_AGGREGATE_INCLUDE_PAPER: bool = False  # false: aggregate limits only count/guard LIVE accounts
+    RISK_WS_MAX_TOTAL_NOTIONAL_USDT: float = Field(10000.0, ge=0)
+    RISK_WS_MAX_DAILY_LOSS_USDT: float = Field(300.0, ge=0)
+    RISK_WS_MAX_OPEN_POSITIONS: int = Field(5, ge=0)
+    RISK_GLOBAL_MAX_TOTAL_NOTIONAL_USDT: float = Field(0.0, ge=0)
+    RISK_GLOBAL_MAX_DAILY_LOSS_USDT: float = Field(0.0, ge=0)
+    RISK_GLOBAL_MAX_OPEN_POSITIONS: int = Field(0, ge=0)
+    # Hard cap of capital per LIVE account: sizing and margin never use more equity than this (0 = no cap).
+    RISK_LIVE_ACCOUNT_MAX_CAPITAL_USDT: float = Field(1000.0, ge=0)
 
     @field_validator(
         "CORS_ORIGINS",

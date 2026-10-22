@@ -20,6 +20,8 @@ class AccountCreate(BaseModel):
     max_risk_per_trade_pct: Decimal = Field(Decimal("1"), gt=0, le=100)
     max_daily_loss_pct: Decimal = Field(Decimal("3"), gt=0, le=100)
     max_drawdown_pct: Decimal = Field(Decimal("15"), gt=0, le=100)
+    # Hard capital cap for LIVE accounts (USDT). None = only the instance cap (RISK_LIVE_ACCOUNT_MAX_CAPITAL_USDT).
+    max_capital_usdt: Decimal | None = Field(None, gt=0, le=Decimal("1000000000"))
 
     @field_validator("exchange")
     @classmethod
@@ -39,6 +41,7 @@ class AccountUpdate(BaseModel):
     max_risk_per_trade_pct: Decimal | None = Field(None, gt=0, le=100)
     max_daily_loss_pct: Decimal | None = Field(None, gt=0, le=100)
     max_drawdown_pct: Decimal | None = Field(None, gt=0, le=100)
+    max_capital_usdt: Decimal | None = Field(None, gt=0, le=Decimal("1000000000"))
 
 
 class AccountRead(BaseModel):
@@ -59,6 +62,7 @@ class AccountRead(BaseModel):
     max_risk_per_trade_pct: Decimal
     max_daily_loss_pct: Decimal
     max_drawdown_pct: Decimal
+    max_capital_usdt: Decimal | None = None
     paper_balance: Decimal
     paper_initial_balance: Decimal
     last_equity: Decimal | None = None

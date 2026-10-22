@@ -172,7 +172,7 @@ def alert_from_audit(
         if prefix == "global_kill_switch":
             return None  # the global kill switch itself already alerted
         fields = {k: data.get(k) for k in ("symbol", "side", "quantity", "reason")}
-        if prefix in ("max_daily_loss", "max_drawdown", "kill_switch"):
+        if prefix in ("max_daily_loss", "max_drawdown", "kill_switch", "aggregate_daily_loss"):
             return build_payload(AlertEvent.RISK_LIMIT, dedup=f"risk:{account_id}:{prefix}", **ctx, **fields)
         return build_payload(
             AlertEvent.ORDER_REJECTED, dedup=f"rej:{account_id}:{data.get('symbol')}:{prefix}", **ctx, **fields

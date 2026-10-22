@@ -68,6 +68,11 @@ REASONS_PT: dict[str, str] = {
     "leverage_limit": "alavancagem acima do limite",
     "max_risk_per_trade": "risco por trade acima do limite",
     "insufficient_margin": "margem insuficiente",
+    "aggregate_daily_loss": "limite de perda diária agregada (USDT) atingido",
+    "aggregate_notional": "exposição total agregada acima do limite",
+    "aggregate_positions": "número máximo de posições simultâneas atingido",
+    "stop_beyond_liquidation": "stop depois do (ou perto demais do) preço de liquidação",
+    "leverage_bracket": "alavancagem acima do permitido pela corretora para este tamanho",
 }
 
 

@@ -29,6 +29,7 @@ from app.services.execution import is_global_kill_switch_on
 from app.services.kill_switch import reset_account_kill_switch
 from app.services.mfa import require_live_mfa
 from app.services.position_mode import HEDGE_MODE_MESSAGE
+from app.services.risk_limits import instance_capital_cap
 from app.strategy.state_machine import ACTIVE_STATES
 
 router = APIRouter()
@@ -68,6 +69,20 @@ def _check_risk_limits(ctx: WorkspaceContext, new: dict, baseline: dict) -> None
         value = new.get(field)
         if value is not None and Decimal(str(value)) > Decimal(str(baseline[field])):
             ctx.require(Role.ADMIN)
+    if "max_capital_usdt" in new:
+        _check_capital_cap(ctx, new["max_capital_usdt"], baseline.get("max_capital_usdt"))
+
+
+def _check_capital_cap(ctx: WorkspaceContext, value, current) -> None:
+    """The per-account capital cap can only be raised/removed by an admin and never above the instance cap."""
+    instance = instance_capital_cap()
+    if value is not None and instance is not None and Decimal(str(value)) > instance:
+        raise HTTPException(
+            422,
+            detail=f"max_capital_usdt acima do teto da instância ({instance} USDT, RISK_LIVE_ACCOUNT_MAX_CAPITAL_USDT)",
+        )
+    if current is not None and (value is None or Decimal(str(value)) > Decimal(str(current))):
+        ctx.require(Role.ADMIN)
 
 
 @router.get("/exchanges", response_model=list[ExchangeInfoOut])
@@ -121,6 +136,7 @@ async def connect_account(
         max_risk_per_trade_pct=data.max_risk_per_trade_pct,
         max_daily_loss_pct=data.max_daily_loss_pct,
         max_drawdown_pct=data.max_drawdown_pct,
+        max_capital_usdt=data.max_capital_usdt,
     )
     db.add(account)
     await db.flush()
@@ -155,7 +171,7 @@ async def update_account(
     _check_live_allowed(changes.get("execution_mode"), ctx)
     if changes.get("execution_mode") == ExecutionMode.LIVE:
         require_live_mfa(ctx.user)
-    _check_risk_limits(ctx, changes, {f: getattr(account, f) for f in RISK_FIELDS})
+    _check_risk_limits(ctx, changes, {f: getattr(account, f) for f in (*RISK_FIELDS, "max_capital_usdt")})
     if "is_testnet" in changes and changes["is_testnet"] is False and account.is_testnet:
         ctx.require(Role.ADMIN)  # testnet -> mainnet
     for key, value in changes.items():

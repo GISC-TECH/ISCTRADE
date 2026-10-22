@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     news,
     realtime_ws,
     reports,
+    risk,
     scanner,
     strategies,
     trading,
@@ -35,3 +36,4 @@ api_router.include_router(news.calendar_router, prefix="/calendar", tags=["calen
 api_router.include_router(realtime_ws.router, tags=["realtime"])
 api_router.include_router(trading.router, prefix="/trading", tags=["trading"])
 api_router.include_router(market.router, prefix="/market", tags=["market"])
+api_router.include_router(risk.router, prefix="/risk", tags=["risk"])

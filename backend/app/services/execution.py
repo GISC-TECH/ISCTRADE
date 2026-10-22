@@ -40,6 +40,7 @@ from app.models import (
 from app.models.base import utcnow
 from app.services.audit import log_event
 from app.services.position_math import apply_fill
+from app.services.risk_limits import aggregate_exposures, capital_cap
 from app.services.risk_manager import AccountRiskState, OrderRequest, RiskManager
 from app.services.symbol_filters import SymbolFilters, default_filters
 from app.strategy.base import OrderIntent
@@ -495,6 +496,9 @@ class OrderService:
     ) -> ExecutionResult:
         """`ref_price` is the expected entry: the market price, or the limit price for LIMIT orders."""
         filters = filters or default_filters(symbol)
+        cap = capital_cap(account)
+        if cap is not None and (risk_state.capital_cap is None or cap < risk_state.capital_cap):
+            risk_state = replace(risk_state, capital_cap=cap)  # hard capital cap of live accounts (G-02)
         if order_type == OrderType.LIMIT:
             if limit_price is None or limit_price <= 0:
                 return await self._reject(
@@ -547,6 +551,9 @@ class OrderService:
             if used:
                 risk_state = replace(risk_state, used_margin=risk_state.used_margin + used)
         decision = self.rm.evaluate(request, risk_state)
+        if decision.allowed and not intent.reduce_only:
+            exposures = await aggregate_exposures(db, account, request, risk_state.equity)
+            decision = self.rm.evaluate_aggregate(request, exposures)
         if not decision.allowed:
             result = await self._reject(db, account, bot, intent, symbol, qty, leverage, decision.reason)
             result.kill_switch = decision.kill_switch

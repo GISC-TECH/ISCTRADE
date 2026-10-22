@@ -46,6 +46,9 @@ class Account(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     max_risk_per_trade_pct: Mapped[Decimal] = mapped_column(default=Decimal("1"), nullable=False)
     max_daily_loss_pct: Mapped[Decimal] = mapped_column(default=Decimal("3"), nullable=False)
     max_drawdown_pct: Mapped[Decimal] = mapped_column(default=Decimal("15"), nullable=False)
+    # Hard cap of capital (USDT) the RiskManager may use on a LIVE account (sizing and margin), on top of the
+    # instance-wide RISK_LIVE_ACCOUNT_MAX_CAPITAL_USDT. NULL = only the instance cap applies.
+    max_capital_usdt: Mapped[Decimal | None] = mapped_column()
 
     # Paper trading ledger (USDT)
     paper_initial_balance: Mapped[Decimal] = mapped_column(default=Decimal("10000"), nullable=False)
@@ -57,6 +60,8 @@ class Account(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     day_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_equity: Mapped[Decimal | None] = mapped_column()
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Cursor of the deposit/withdrawal history already folded into peak/day-start equity (live accounts).
+    transfers_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     workspace: Mapped[Workspace] = relationship(back_populates="accounts")
     bots: Mapped[list[BotConfig]] = relationship(back_populates="account", cascade="all, delete-orphan")
