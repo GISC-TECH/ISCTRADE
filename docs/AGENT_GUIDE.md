@@ -67,7 +67,7 @@ Produção: `./scripts/deploy.sh` (valida `.env`, faz backup, build, migrações
 
 Requer Python 3.12, Node.js 20, PostgreSQL 15 e Redis 7 locais. As configurações do backend vêm de variáveis de
 ambiente ou de um arquivo `.env` no diretório onde o processo roda (`backend/.env`, também ignorado pelo git).
-Ajuste `DATABASE_URL`/`REDIS_URL`/`CELERY_*` para `localhost` e use `COOKIE_SECURE=false` sem HTTPS.
+Ajuste `DATABASE_URL`/`REDIS_URL`/`CELERY_*` para `localhost` e use `COOKIE_SECURE=false` sem HTTPS (Redis local sem senha: deixe `REDIS_PASSWORD` vazio).
 
 ```bash
 # Backend

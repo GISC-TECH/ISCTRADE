@@ -1,4 +1,4 @@
-# Cobertura do backend (CI: pytest --cov). Medido em 2026-10-22: 85,8% (linhas + ramos). O limiar fica um pouco
+# Cobertura do backend (CI: pytest --cov). Medido em 2026-10-22: 89,5% (linhas + ramos, com greenlet). O limiar fica um pouco
 # abaixo para tolerar variação; suba-o quando a cobertura crescer — nunca o reduza para "passar" código sem testes.
 [run]
 source = app
@@ -9,7 +9,7 @@ omit =
     app/*/__main__.py
 
 [report]
-fail_under = 84
+fail_under = 87
 skip_covered = true
 show_missing = true
 precision = 1

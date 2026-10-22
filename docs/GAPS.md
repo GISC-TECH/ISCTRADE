@@ -52,7 +52,7 @@ Estimativa para chegar a "conta real mínima" com segurança (Fases A+B abaixo):
 | `npm ci`, `npm run lint`, `tsc --noEmit`, `next build` | OK (lint: 0 erros, 12 avisos `react-hooks/set-state-in-effect`) |
 | `pip-audit -r backend/requirements.txt` | **1 vulnerabilidade: `orjson 3.11.5` (PYSEC-2026-107, corrigido em 3.11.6)** |
 | `npm audit` | 9 (7 high, 2 moderate), todas na cadeia build-time do Tailwind 3/eslint-config-next (braces, micromatch, chokidar, postcss-selector-parser) |
-| `gitleaks git` (67 commits) | 18 achados, **todos falsos positivos** (`placeholder-key` em testes e `key=` de presets) |
+| `gitleaks git` (67 commits) | 18 achados, **todos falsos positivos** (`placeholder-key` em testes e `key=` de presets) — allowlist em `.gitleaks.toml`, job `secrets` no CI: 0 achados |
 | Frontend (stack local, Chrome headless, desktop 1366px e mobile 390px) | 16 páginas renderizam (200), sem erros de console, sem overflow horizontal, `lang=pt-BR` |
 | **Não verificado** | Containers do box não têm DNS/saída para a internet: Binance, notícias, calendário e WhatsApp **a partir do Docker** não foram exercitados; recuperação após reinício com bots/posições reais foi avaliada **por leitura de código**, não por teste. Binance mainnet REST é geobloqueada (451) aqui. O box exigiu `net.bridge.bridge-nf-call-iptables=0` (regras iptables legadas do sandbox) para os containers se comunicarem — não é problema do projeto. |
 
@@ -105,17 +105,17 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | G-24 | `orjson 3.11.5` com PYSEC-2026-107 (o AUDIT.md diz "pip-audit limpo") | Dependências | P2 | ✅ **Resolvido** — `orjson==3.11.9`; `pip-audit` limpo; CI roda `pip-audit` | P | `backend/requirements.txt` |
 | G-25 | `npm audit`: 7 high + 2 moderate na cadeia build-time (Tailwind 3, eslint-config-next); migrar para Tailwind 4 | Dependências | P3 | Pendente | M | `frontend/package.json` |
 | G-26 | Trilha de auditoria imutável (hash encadeado/assinatura/WORM) | Auditoria | P2 | ✅ **Resolvido** — cadeia HMAC-SHA256 selada pela tarefa `audit.seal`, trigger anti-UPDATE no PostgreSQL, sem FKs em cascata, `GET /admin/audit/verify` + `python -m app.audit_cli verify`, verificação diária (migração `0009`; `SECURITY.md` §Trilha). WORM externo continua opcional (âncora do `head`) | M | `services/audit_chain.py` |
-| G-27 | Redis sem senha; métricas 9101/9102 sem autenticação (rede interna) | Infra | P2 | Aceito/Parcial | P | `docker-compose.yml` |
+| G-27 | Redis sem senha; métricas 9101/9102 sem autenticação (rede interna) | Infra | P2 | ✅ **Resolvido** — Redis com senha/ACL (`REDIS_PASSWORD`, usuário `REDIS_USERNAME` com `default` desativado, comandos administrativos e `FLUSHALL`/`FLUSHDB` bloqueados — `infra/redis/entrypoint.sh`); backend, workers, beat, streams, healthcheck e `redis_exporter` autenticam; produção e `deploy.sh` recusam Redis sem senha; alerta `RedisDown`. Métricas 9101/9102 continuam sem autenticação, só na rede interna (aceito) | P | `docker-compose.yml` |
 | G-28 | Reset de senha, lista/revogação de sessões por dispositivo | Auth | P2 | Faltando | M | rotas `/auth/*` |
-| G-29 | Sem rotação da `MASTER_ENCRYPTION_KEY` (re-cifrar chaves) | Cripto | P2 | Faltando | M | `SECURITY.md` §limitações |
-| G-30 | Supply chain: dependências transitivas Python não pinadas (sem lock/hashes), imagens base sem digest (`caddy:2-alpine`, `postgres:15-alpine`), sem Dependabot/Renovate, sem SBOM, sem `pip-audit`/`npm audit`/`gitleaks` no CI, sem allowlist do gitleaks | Supply chain | P2 | Faltando | P–M | `requirements.txt`, Dockerfiles, `docs/ci/ci.yml` |
+| G-29 | Sem rotação da `MASTER_ENCRYPTION_KEY` (re-cifrar chaves) | Cripto | P2 | ✅ **Resolvido** — keyring: cifras `v2:<id da chave>:...`, `MASTER_ENCRYPTION_KEYS_PREVIOUS` só decifra (cifras antigas sem id continuam legíveis); `python -m app.keys_cli status|reencrypt [--dry-run]|generate|audit-pin` re-cifra chaves de API e segredos TOTP sem downtime; `AUDIT_CHAIN_KEY=b64:` preserva a cadeia de auditoria; procedimento em `RUNBOOK.md` §10.1 (exercitado no Docker) | M | `SECURITY.md` §limitações |
+| G-30 | Supply chain: dependências transitivas Python não pinadas (sem lock/hashes), imagens base sem digest (`caddy:2-alpine`, `postgres:15-alpine`), sem Dependabot/Renovate, sem SBOM, sem `pip-audit`/`npm audit`/`gitleaks` no CI, sem allowlist do gitleaks | Supply chain | P2 | **Parcial** — CI com `pip-audit`, `npm audit --omit=dev` e `gitleaks` (histórico inteiro, allowlist em `.gitleaks.toml`). Faltam: lock com hashes das dependências Python, imagens base por digest, Dependabot/Renovate e SBOM | P–M | `requirements.txt`, Dockerfiles, `docs/ci/ci.yml` |
 | G-31 | `uvicorn --forwarded-allow-ips '*'` em produção: seguro só porque o backend não publica portas e o Caddy sobrescreve `X-Forwarded-For`; restringir à rede do Caddy | Infra | P3 | Aceito | P | `docker-compose.prod.yml` |
 
 ### 2.4 Funcionalidades prometidas (README / ROADMAP / AGENT_GUIDE)
 
 | ID | Funcionalidade | Prio | Status | Esforço | Evidência |
 |---|---|---|---|---|---|
-| F-01 | CI (lint + testes + build) | **P0** | **Parcial** — workflow completo e testado localmente em `docs/ci/ci.yml` (+ `pip-audit`, `npm audit`, `promtool`/`amtool`, shellcheck dos scripts de backup, build da imagem de backup); **ativação** exige token com escopo `workflow` (passos em `docs/ci/README.md`) | P | `docs/ci/ci.yml`; `ROADMAP` Fase 0 |
+| F-01 | CI (lint + testes + build) | **P0** | **Parcial** — workflow completo e testado localmente em `docs/ci/ci.yml` (+ `pip-audit`, `npm audit`, `gitleaks`, limiar de cobertura, `promtool`/`amtool`, shellcheck dos scripts de backup/Redis, build da imagem de backup); **ativação** exige token com escopo `workflow` (passos em `docs/ci/README.md`) | P | `docs/ci/ci.yml`; `ROADMAP` Fase 0 |
 | F-02 | Auditoria à prova de adulteração (hash chain) | P2 | ✅ Resolvido | M | ver G-26 |
 | F-03 | Limites de risco agregados por workspace | P0 | ✅ **Resolvido** (G-02) | M | ver G-02 |
 | F-04 | PnL por período (`/history/pnl`, gráfico 30 dias) | P2 | ✅ Resolvido — `GET /history/pnl` (dia/semana/mês, agrupado por conta/bot/estratégia/símbolo, taxas USD separadas) e página **PnL & relatórios** com barras empilhadas + PnL acumulado | M | `history.py` não tem a rota; `AGENT_GUIDE` Etapa 6 |
@@ -159,7 +159,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | ID | Item | Prio | Status | Esforço | Evidência |
 |---|---|---|---|---|---|
 | B-01 | Módulos críticos com baixa cobertura: `workers/streams.py` 43%, `services/prices.py` 30%, `services/dispatch.py` 53%, tasks Celery 59–75%, `services/jobs.py` 70%, `api/.../history.py` 70%, `manual_trading.py` 80% | P2 | Parcial | M | `pytest --cov` |
-| B-02 | Cobertura medida sem `concurrency=greenlet` subestima endpoints (87% vs 90%); sem `.coveragerc` nem limiar no CI | P3 | Faltando | P | `backend/pytest.ini` |
+| B-02 | Cobertura medida sem `concurrency=greenlet` subestima endpoints (87% vs 90%); sem `.coveragerc` nem limiar no CI | P3 | ✅ **Resolvido** — `backend/.coveragerc` (`concurrency = greenlet, thread`, ramos) com `fail_under`; CI roda `pytest --cov` | P | `backend/pytest.ini` |
 | B-03 | `mypy` não faz parte do CI (~50 erros, maioria `**kwargs` em `log_event` e LSP em `cancel_order/get_order`) | P3 | Faltando | M | `mypy app` |
 | B-04 | `NotImplementedError` restantes são abstrações legítimas (`technical.py:100`, `binance_ws.py:123`, `whatsapp.py:60`); nenhum TODO/FIXME | — | OK | — | grep |
 | B-05 | Avisos de depreciação: `HTTP_422_UNPROCESSABLE_ENTITY`, `starlette.testclient` com httpx | P3 | Pendente | P | saída do pytest |

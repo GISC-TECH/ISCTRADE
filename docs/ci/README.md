@@ -23,7 +23,7 @@ nada quebrado chegue ao `deploy.sh` (que faz `git pull`).
 
 | Job | Passos |
 |---|---|
-| `backend` | `ruff check`, `ruff format --check`, `pytest --cov` (inclui teste de migração em PostgreSQL 15 de serviço; falha abaixo do limiar `fail_under` de `backend/.coveragerc`, hoje 84% de linhas+ramos para 85,8% medidos), `pip-audit -r requirements.txt` |
+| `backend` | `ruff check`, `ruff format --check`, `pytest --cov` (inclui teste de migração em PostgreSQL 15 de serviço; falha abaixo do limiar `fail_under` de `backend/.coveragerc`, hoje 87% de linhas+ramos para 89,5% medidos), `pip-audit -r requirements.txt` |
 | `frontend` | `npm ci`, `eslint`, `tsc --noEmit`, `npm test` (Vitest + Testing Library em `frontend/tests/unit`), `next build`, `npm audit --omit=dev --audit-level=critical` (subir para `high` após a migração para Tailwind 4 — GAPS G-25) |
 | `e2e` | PostgreSQL + Redis de serviço, `alembic upgrade head`, uvicorn em segundo plano, `next build` + `next start` e Playwright (`frontend/e2e/smoke.spec.ts`: cadastro com login automático → aceite do aviso → ativação do 2FA → login em duas etapas → dashboard → conta paper → Tempo real; e a página 404), em desktop e mobile. Relatório HTML como artefato em caso de falha |
 | `compose` | `docker compose config` (dev, prod e prod com perfis `monitoring` + `backup`), `shellcheck scripts/*.sh infra/backup/*.sh infra/redis/*.sh` |
