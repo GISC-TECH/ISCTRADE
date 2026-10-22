@@ -18,26 +18,19 @@ from __future__ import annotations
 import csv
 import io
 from collections.abc import Iterable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.backtest.data import BacktestDataError, _ts
 from app.exchanges.base import ExchangeAdapter
+from app.strategy.base import FundingEvent
+
+__all__ = ["FundingEvent", "constant_funding", "fetch_funding", "funding_summary", "load_funding_csv", "normalize"]
 
 EIGHT_HOURS_MS = 8 * 3_600_000
 MAX_FUNDING_EVENTS = 20_000  # ~18 years of 8h funding
 PAGE_LIMIT = 1000
-
-
-@dataclass(frozen=True)
-class FundingEvent:
-    time: int  # ms epoch
-    rate: Decimal
-
-    def as_dict(self) -> dict[str, Any]:
-        return {"time": self.time, "rate": str(self.rate)}
 
 
 def normalize(

@@ -33,6 +33,17 @@ class Candle:
         )
 
 
+@dataclass(frozen=True)
+class FundingEvent:
+    """One settled funding rate (perpetuals). ``rate`` is per funding interval (8 h on Binance)."""
+
+    time: int  # ms epoch of the settlement
+    rate: Decimal
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"time": self.time, "rate": str(self.rate)}
+
+
 @dataclass
 class OrderIntent:
     """What a strategy wants to do. Every intent is validated by the RiskManager before execution."""
@@ -57,6 +68,8 @@ class StrategyContext:
     leverage: int
     params: dict[str, Any]
     state: dict[str, Any]  # persisted between ticks (JSON-serializable)
+    # settled funding rates up to the last closed candle, oldest first (only for strategies with needs_funding)
+    funding: list[FundingEvent] = field(default_factory=list)
 
     @property
     def price(self) -> Decimal:
@@ -90,6 +103,13 @@ class Strategy(ABC):
     name: ClassVar[str]
     description: ClassVar[str] = ""
     params_spec: ClassVar[tuple[ParamSpec, ...]] = ()
+    #: bots fetch the funding history (``ctx.funding``) only for strategies that need it
+    needs_funding: ClassVar[bool] = False
+
+    @property
+    def funding_lookback(self) -> int:
+        """How many settled funding events the strategy needs in ``ctx.funding``."""
+        return 0
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         self.params = self.validate_params(params or {})

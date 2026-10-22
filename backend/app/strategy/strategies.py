@@ -7,13 +7,21 @@ from typing import Any
 from app.strategy.base import Strategy, StrategyParamError
 from app.strategy.classic import CLASSIC_STRATEGIES
 from app.strategy.ema_cross import EmaCrossStrategy
+from app.strategy.funding import FUNDING_STRATEGIES
 from app.strategy.grid import GridStrategy
 from app.strategy.rsi_reversion import RsiBollingerStrategy
 from app.strategy.technical import TECHNICAL_STRATEGIES
 
 STRATEGIES: dict[str, type[Strategy]] = {
     cls.key: cls
-    for cls in (GridStrategy, EmaCrossStrategy, RsiBollingerStrategy, *TECHNICAL_STRATEGIES, *CLASSIC_STRATEGIES)
+    for cls in (
+        GridStrategy,
+        EmaCrossStrategy,
+        RsiBollingerStrategy,
+        *TECHNICAL_STRATEGIES,
+        *CLASSIC_STRATEGIES,
+        *FUNDING_STRATEGIES,
+    )
 }
 
 # Backwards compatible simple mapping key -> display name

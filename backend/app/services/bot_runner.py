@@ -32,7 +32,7 @@ from app.services.news.store import load_signals
 from app.services.position_math import stop_triggered
 from app.services.risk_manager import RiskManager
 from app.services.symbol_filters import SymbolFilters
-from app.strategy.base import StrategyContext
+from app.strategy.base import FundingEvent, StrategyContext
 from app.strategy.state_machine import BotStateMachine
 from app.strategy.strategies import build_strategy
 
@@ -279,6 +279,8 @@ class BotRunner:
         ctx = self._context(
             candles, pos.quantity if pos else Decimal(0), pos.entry_price if pos else Decimal(0), equity, state, symbol
         )
+        if strategy.needs_funding:
+            ctx.funding = await self._funding(symbol, strategy.funding_lookback, last.close_time)
         for intent in strategy.on_candle(ctx):
             gate = await self._entry_gate(symbol, intent, auto, opts, sym_states)
             if gate.block:
@@ -315,6 +317,18 @@ class BotRunner:
             risk_state = self.rm.from_account(account, equity)
 
         return {**ctx.state, "last_candle": last.open_time}, None
+
+    async def _funding(self, symbol: str, limit: int, until_ms: int) -> list[FundingEvent]:
+        """Settled funding up to the last closed candle; empty (strategy stays flat) when unavailable."""
+        fetch = getattr(self.market, "get_funding_history", None)
+        if fetch is None or limit <= 0:
+            return []
+        try:
+            events = await fetch(symbol, limit)
+        except Exception as exc:  # noqa: BLE001 - funding is advisory; never break the tick
+            logger.warning("funding history unavailable for %s: %s", symbol, exc)
+            return []
+        return [e for e in events if e.time <= until_ms][-limit:]
 
     def _context(self, candles, qty, entry, equity, state, symbol: str | None = None) -> StrategyContext:
         return StrategyContext(

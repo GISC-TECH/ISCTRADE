@@ -17,6 +17,7 @@ Execution model (documented assumptions):
 
 from __future__ import annotations
 
+import bisect
 import math
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -138,6 +139,9 @@ class BacktestEngine:
     ) -> None:
         self.strategy = strategy
         self.funding = sorted(funding or [], key=lambda e: e.time)
+        self._funding_times = [e.time for e in self.funding]
+        # strategies that read funding see the settled events up to the current candle (no look-ahead)
+        self._funding_ctx = max(getattr(strategy, "funding_lookback", 0), 0) if strategy.needs_funding else 0
         self.funding_total = ZERO  # net funding received (negative = paid)
         self.funding_applied = 0
         self.entry_gate = entry_gate  # optional news/event filter (same logic as the live bots)
@@ -337,6 +341,10 @@ class BacktestEngine:
         return BacktestResult(metrics, curve, self.trades, self.rejections, killed_at)
 
     def _ctx(self, candles: list[Candle], i: int, lookback: int, price: Decimal, state: dict) -> StrategyContext:
+        funding: list[FundingEvent] = []
+        if self._funding_ctx and self.funding:
+            end = bisect.bisect_right(self._funding_times, candles[i].close_time)
+            funding = self.funding[max(0, end - self._funding_ctx) : end]
         return StrategyContext(
             symbol=self.symbol,
             candles=candles[max(0, i + 1 - lookback) : i + 1],
@@ -346,6 +354,7 @@ class BacktestEngine:
             leverage=self.cfg.leverage,
             params=self.strategy.params,
             state=state,
+            funding=funding,
         )
 
 

@@ -125,7 +125,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | F-11 | Arquivo histórico de notícias para backtest com filtro | P3 | Faltando | M | `ROADMAP` Fase 1 |
 | F-12 | Alertas de posição ao vivo (além de aberta/fechada) | P1 | Parcial | M | ver G-06 |
 | F-13 | Paper com preenchimento parcial | P2 | Faltando | M | ver G-10a |
-| F-14 | Estratégia de funding (contrarian) | P3 | Faltando (documentado como não implementado) | M | `STRATEGIES.md` linha 113 |
+| F-14 | Estratégia de funding (contrarian) | P3 | ✅ Resolvido — `funding_contrarian` (funding extremo + z-score + confirmação EMA, stop ATR); `ctx.funding` alimentado no backtest/walk-forward (sem lookahead) e nos bots (histórico público da exchange) | M | `strategy/funding.py`; `STRATEGIES.md` §Funding contrarian |
 | F-15 | WebSocket da Bybit | P3 | Faltando (adaptador só REST, experimental) | G | `exchanges/bybit.py:616` |
 | F-16 | Escolha de exchange no formulário de contas | P3 | Faltando no frontend (API tem `GET /accounts/exchanges` e campo `exchange`) | P | `frontend/app/dashboard/accounts/page.tsx` |
 | F-17 | Modo spot | P3 | Faltando (só USDT-M) | G | nenhuma referência a spot |

@@ -110,11 +110,39 @@ Notas:
   "unidade N" dos Turtles. *Pyramiding* (até 4 unidades) e o limite de unidades correlacionadas não são
   implementados (posição líquida única). A regra "pular após vencedor" é simplificada: o rompimento pulado zera o
   filtro (o original acompanha o resultado hipotético do trade pulado).
-- **Funding contrarian** não foi implementado: o pipeline de estratégias (bots e backtest) ainda não recebe o
-  histórico de *funding*. O scanner já exibe o funding atual de cada símbolo.
+- **Funding contrarian** (`funding_contrarian`, `backend/app/strategy/funding.py`): ver a seção abaixo.
 - **Sem lookahead**: canais e faixas de entrada usam apenas candles anteriores ao candle fechado; a nuvem do
   Ichimoku usa os valores calculados `displacement` candles antes. Há testes que comparam indicadores calculados no
   histórico completo com o prefixo, e backtests cortados × completos (`tests/test_classic_strategies.py`).
+
+## Funding contrarian (`funding_contrarian`)
+
+Estratégia baseada na taxa de *funding* dos perpétuos (paga a cada 8 h). Funding **muito positivo** indica
+comprados lotados pagando caro para manter a posição (frequente perto de topos locais); **muito negativo** indica
+vendidos lotados (fundos locais, *short squeezes*). A estratégia vai contra a multidão:
+
+| Etapa | Regra | Parâmetros (padrão) |
+|---|---|---|
+| Sinal | Média dos últimos `avg_events` fundings **liquidados** além de ±`entry_rate` | `entry_rate` 0,0005 (0,05% por 8 h), `avg_events` 1 |
+| Filtro estatístico | O sinal está ≥ `z_entry` desvios-padrão da média dos últimos `lookback_events` fundings (0 = desliga) | `z_entry` 1,5, `lookback_events` 30 (10 dias) |
+| Confirmação de preço | Vendido só com fechamento abaixo da EMA; comprado só acima (0 = desliga) | `confirm_ema` 20 |
+| Direção | Funding positivo extremo → **vende**; negativo extremo → **compra** | `allow_short` sim |
+| Saída | Funding normaliza (vendido: ≤ `exit_rate`; comprado: ≥ −`exit_rate`), saída por tempo, stop ATR ou alvo | `exit_rate` 0,0001, `max_hold_bars` 72, `atr_multiplier` 2, `take_profit_rr` 2 |
+
+- No máximo **uma entrada por funding liquidado**: após um stop, a estratégia não reentra com a mesma leitura.
+- **Dados**: a estratégia lê `ctx.funding` (eventos liquidados até o fechamento do último candle). Nos **bots**, o
+  runner busca o histórico público da exchange (`GET /fapi/v1/fundingRate`, ou `/v5/market/funding/history` na
+  Bybit) somente para estratégias com `needs_funding`, a cada candle novo; se a busca falhar, a estratégia fica
+  parada (nunca opera sem dados). No **backtest** e no **walk-forward**, usa o mesmo funding carregado para o custo
+  (`funding.mode`: `auto`/`exchange`/`archive`/`csv`/`constant`), alinhado por tempo — **sem lookahead**. Com
+  `funding.mode = off`, a estratégia não opera.
+- Enquanto segura a posição contra a multidão, ela **recebe** funding, contabilizado em `total_funding`.
+- Resultado real (arquivo data.binance.vision, 1h, 2024 inteiro, parâmetros padrão): BTCUSDT −0,10% (drawdown
+  2,1%, +4,83 USDT de funding recebido); SOLUSDT −1,25% (drawdown 5,8%). Com `entry_rate` 0,0003 e sem confirmação,
+  SOLUSDT +1,93%. Ou seja: **sem vantagem demonstrada** com os padrões — use o walk-forward antes de qualquer uso e
+  combine com outros filtros. Não há robô pronto (preset) para ela.
+- Riscos: funding extremo pode persistir por dias em tendências fortes (o filtro de EMA e o stop ATR limitam a
+  perda); a taxa muda a cada 8 h, então sinais são raros em timeframes curtos; funding da testnet difere do mainnet.
 
 ## Robôs prontos (presets)
 
