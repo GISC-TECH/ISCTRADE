@@ -95,7 +95,7 @@ docker compose up -d --build
 docker compose ps        # aguarde todos os serviços "healthy" (inclusive streams e celery_beat)
 ```
 
-Serviços: `caddy`, `frontend`, `migrate` (executa `alembic upgrade head` e encerra), `backend`, `celery_worker` (fila `default`: scanner, notícias, calendário, alertas), `celery_worker_trading` (fila `trading`: ticks dos bots, ordens paper, reconciliação, snapshots, reset de risco), `celery_beat`, `streams`, `postgres`, `redis` (+ `prometheus`, `alertmanager`, `node_exporter` e `grafana` no perfil opcional `monitoring`; `backup` no perfil `backup`). Todos têm healthcheck e rotação de logs.
+Serviços: `caddy`, `frontend`, `migrate` (executa `alembic upgrade head` e encerra), `backend`, `celery_worker` (fila `default`: scanner, notícias, calendário, alertas), `celery_worker_trading` (fila `trading`: ticks dos bots, ordens paper, reconciliação, snapshots, reset de risco), `celery_beat`, `streams`, `postgres`, `redis` (+ `prometheus`, `alertmanager`, `node_exporter`, `redis_exporter` e `grafana` no perfil opcional `monitoring`; `backup` no perfil `backup`). Todos têm healthcheck e rotação de logs.
 
 - Aplicação: https://localhost (Caddy, certificado local) — ou http://localhost:3000 direto no Next.js (o Next encaminha `/api/*` e o WebSocket do tempo real ao backend; em desenvolvimento qualquer origem `localhost`/`127.0.0.1` é aceita no WebSocket, em produção a origem precisa estar em `CORS_ORIGINS`)
 - API: https://localhost/api/v1 — documentação interativa em http://localhost:8000/docs (desabilitada em produção)

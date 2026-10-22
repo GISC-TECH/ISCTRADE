@@ -13,7 +13,7 @@
 - Gere `JWT_SECRET` (≥ 32 caracteres) e `MASTER_ENCRYPTION_KEY` (base64 de 32 bytes) com fontes criptograficamente seguras (veja o README).
 - Em `ENVIRONMENT=production` a API **recusa iniciar** com `JWT_SECRET`/`MASTER_ENCRYPTION_KEY` fracos ou placeholders, `COOKIE_SECURE=false` ou `DEBUG=true`; o `scripts/deploy.sh` faz as mesmas verificações antes do deploy.
 - **Rotação do `JWT_SECRET`**: troque o valor e reinicie `backend`, `celery_worker`, `celery_beat` e `streams` — todas as sessões são invalidadas.
-- **Rotação da `MASTER_ENCRYPTION_KEY`**: ainda não há comando automático. Procedimento: pare os serviços, reconecte as contas (ou re-criptografe com script próprio usando a chave antiga e a nova) e só então descarte a chave antiga. Perder a chave torna as chaves armazenadas irrecuperáveis (será necessário reconectar as contas).
+- **Rotação da `MASTER_ENCRYPTION_KEY`** (keyring): cada valor cifrado (chaves de API e segredos TOTP) carrega o id da chave (`v2:<id>:...`); `MASTER_ENCRYPTION_KEYS_PREVIOUS` mantém chaves antigas só para decifrar e `python -m app.keys_cli reencrypt` migra tudo para a chave atual, sem downtime. Procedimento completo em [RUNBOOK.md §10.1](RUNBOOK.md#rotacao-master-key) (inclui fixar `AUDIT_CHAIN_KEY` com `keys_cli audit-pin`). Perder a chave torna os valores cifrados com ela irrecuperáveis (será necessário reconectar as contas / refazer o 2FA).
 - Backups (`./backups`) contêm as chaves **criptografadas**; guarde a `MASTER_ENCRYPTION_KEY` separada dos backups.
 
 ## Chaves da Binance
@@ -104,7 +104,7 @@
   `auth.2fa_recovery_regenerated`, `auth.login_2fa_failed`, `admin.user_2fa_reset` e `admin.security_policy_updated`.
 
 ## Infraestrutura
-- Apenas o Caddy expõe portas públicas em produção (80/443). PostgreSQL, Redis, backend e frontend ficam em redes internas (o override de produção remove as portas publicadas).
+- Apenas o Caddy expõe portas públicas em produção (80/443). PostgreSQL, Redis, backend e frontend ficam em redes internas (o override de produção remove as portas publicadas). O Redis exige senha (`REDIS_PASSWORD`, ACL que bloqueia comandos administrativos e `FLUSHALL`/`FLUSHDB`; obrigatória em produção).
 - Headers de segurança (HSTS, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`) configurados no Caddy; documentação interativa da API desabilitada em produção.
 - Containers rodam como usuário não-root, com health checks.
 - Migrações executadas por um serviço dedicado (`migrate`) antes de API e workers; o `deploy.sh` faz backup do banco antes de migrar.
@@ -131,7 +131,7 @@ Toda linha de `audit_logs` é **selada** em uma cadeia de hashes (`app/services/
   Isso detecta até quem tenha a chave e reconstrua a cadeia inteira.
 - Limites: linhas ainda não seladas (últimos segundos) não estão protegidas; apagar um **prefixo** (retenção) é
   reportado como `truncated_prefix` (não é erro, mas fica visível); rotacionar a `MASTER_ENCRYPTION_KEY` sem fixar
-  antes `AUDIT_CHAIN_KEY` invalida a verificação (confira com `python -m app.audit_cli key-fingerprint`). Um
+  antes `AUDIT_CHAIN_KEY` invalida a verificação (confira com `python -m app.audit_cli key-fingerprint`). O `keys_cli audit-pin` imprime o valor `b64:` que preserva a chave atual. Um
   superusuário do PostgreSQL pode desativar o trigger — a proteção real é o HMAC + âncora externa.
 
 ## Resposta a incidentes (runbook resumido)
@@ -148,7 +148,7 @@ Procedimentos completos (go-live, alertas, backups/restauração, monitor extern
 ## Limitações conhecidas
 - 2FA apenas por TOTP (sem WebAuthn/passkeys). Quem perder o autenticador e os códigos de recuperação depende de um super-admin para redefinir.
 - A trilha de auditoria fica no mesmo banco, mas é encadeada com HMAC e verificável (veja acima); não é WORM.
-- Sem rotação automática da `MASTER_ENCRYPTION_KEY`.
+- A rotação da `MASTER_ENCRYPTION_KEY` é manual (comando `keys_cli`), não periódica/automática.
 - Alertas via WhatsApp, Telegram e e-mail (veja [ALERTS.md](ALERTS.md)). Tokens e senha SMTP ficam só no `.env`; o worker Celery e o `streams` expõem métricas sem autenticação nas portas internas 9101/9102 (não publique essas portas).
 
 ## Reporte de vulnerabilidades

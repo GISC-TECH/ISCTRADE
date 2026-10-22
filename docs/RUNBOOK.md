@@ -162,7 +162,7 @@ df -h; free -m; timedatectl
 Sem beat: **nenhum tick, reconciliação, snapshot ou reset diário de risco**. Sem worker `trading`: ticks e ordens
 paper param (stops na corretora continuam valendo para contas live).
 1. `$C logs --tail 200 celery_beat` / `celery_worker_trading`. `$C restart celery_beat celery_worker_trading`.
-2. Fila acumulada? `$C exec redis redis-cli -n 1 llen trading` (fila `trading` no broker DB 1).
+2. Fila acumulada? `$C exec redis /opt/isctrade/cli.sh -n 1 llen trading` (fila `trading` no broker DB 1).
 3. Mantenha **uma única** instância de `celery_beat` (duas geram ticks duplicados).
 4. Se não normalizar em 10 min e houver posições live: kill switch global e gestão manual na Binance.
 
@@ -177,7 +177,7 @@ Impacto: preços de marcação (SL/TP de paper, painel) e eventos de ordem/posi�
 
 <a id="bots-sem-tick"></a>
 ### 4.4 Bots sem tick (`NoBotTicks`, `BotTickErrors`)
-1. Verifique beat/worker ([4.2](#beat-ou-worker-parado)) e Redis (`$C exec redis redis-cli ping`).
+1. Verifique beat/worker ([4.2](#beat-ou-worker-parado)) e Redis (`$C exec redis /opt/isctrade/cli.sh ping`, [4.13](#redis)).
 2. `$C logs --tail 300 celery_worker_trading | grep -i error`; bots em `error` aparecem no painel com o motivo.
 3. Erros de exchange (`-1021` relógio, `-2015` chave/IP, 418/429): seções [4.5](#limite-de-peso-ou-ban-da-binance) e [4.10](#relogio-ntp).
 
@@ -243,6 +243,19 @@ Logs do Docker já rotacionam (10 MB × 5 por container). Retenção de dados no
 4. Investigue: Auditoria global, `$C logs backend | grep -i login`. 5. Veja [Rotação de segredos](#rotacao-de-segredos).
 
 ---
+
+<a id="redis"></a>
+### 4.13 Redis inacessível (`RedisDown`, check `redis`/`broker` do `/health/ready`)
+Impacto: sem broker o Celery para (ticks, reconciliação, alertas); locks e tempo real falham. Stops na corretora
+continuam valendo para contas live.
+1. `$C ps redis` e `$C logs --tail 100 redis`. `WRONGPASS`/`NOAUTH` nos logs dos clientes = senha divergente:
+   `REDIS_PASSWORD`/`REDIS_USERNAME` do `.env` valem para o container `redis` **e** para os clientes, então recrie
+   ambos juntos: `$C up -d --force-recreate redis backend celery_worker celery_worker_trading celery_beat streams`.
+2. `NOPERM` em algum comando = a ACL bloqueia comandos administrativos (`-@admin`, `FLUSHALL`, `FLUSHDB`) — esperado;
+   não relaxe a regra em produção.
+3. Teste: `$C exec redis /opt/isctrade/cli.sh ping` → `PONG`; `$C exec redis /opt/isctrade/cli.sh info memory`.
+4. Memória cheia (`OOM command not allowed`): aumente `REDIS_MEM_LIMIT` e veja filas acumuladas
+   (`... cli.sh -n 1 llen trading`), normalmente causadas por worker parado ([4.2](#beat-ou-worker-parado)).
 
 <a id="backups"></a>
 ## 5. Backups
@@ -347,6 +360,51 @@ RPO = intervalo de backup (24 h por padrão; o estado de posições/ordens é re
 | `JWT_SECRET` | novo valor + `deploy.sh --no-pull` | todos fazem login de novo |
 | `POSTGRES_PASSWORD` | `ALTER USER trading PASSWORD '...'` no banco + `.env` (`POSTGRES_PASSWORD` e `DATABASE_URL`) + deploy | — |
 | Chaves de API Binance | criar nova na Binance → atualizar a conta no painel → revogar a antiga | — |
-| `MASTER_ENCRYPTION_KEY` | sem rotação automática ainda (GAPS G-29): recadastre as chaves de API após trocar | chaves antigas ilegíveis |
+| `MASTER_ENCRYPTION_KEY` | procedimento [10.1](#rotacao-master-key) (keyring + `keys_cli reencrypt`) | nenhum (sem downtime) |
+| `REDIS_PASSWORD` | procedimento [10.2](#rotacao-redis) | ~30 s sem broker |
 | `ALERTMANAGER_WEBHOOK_TOKEN`, `METRICS_TOKEN` | novo valor + `deploy.sh --no-pull` (o deploy reescreve `infra/monitoring/secrets/webhook_token`) | — |
 | Chave age dos backups | gere nova, acrescente a pública em `BACKUP_AGE_RECIPIENTS`; mantenha a antiga para backups antigos | — |
+
+<a id="rotacao-master-key"></a>
+### 10.1 Rotação da `MASTER_ENCRYPTION_KEY` (chaves de API e segredos TOTP)
+Cada valor cifrado leva o *id* da chave (`v2:<id>:...`, 8 hex do SHA-256 da chave — não é segredo). A chave atual
+cifra; as de `MASTER_ENCRYPTION_KEYS_PREVIOUS` só decifram. Valores antigos (sem prefixo) continuam legíveis.
+Faça em janela calma, **com backup recente** (`./scripts/backup_db.sh`).
+
+```bash
+C="docker compose -f docker-compose.yml -f docker-compose.prod.yml"
+# 0. Situação atual (quantos valores por chave; não mostra segredos)
+$C exec backend python -m app.keys_cli status
+# 1. Fixe a chave da trilha de auditoria (se AUDIT_CHAIN_KEY estiver vazio): ela é derivada da chave mestra e
+#    mudaria junto, quebrando a verificação da cadeia. Grave a linha impressa no .env.
+$C exec backend python -m app.keys_cli audit-pin          # -> AUDIT_CHAIN_KEY=b64:...
+# 2. Gere a nova chave e GUARDE-A FORA DO SERVIDOR (cofre de senhas) junto com a antiga
+$C exec backend python -m app.keys_cli generate
+# 3. No .env: MASTER_ENCRYPTION_KEY=<nova>   MASTER_ENCRYPTION_KEYS_PREVIOUS=<antiga>   AUDIT_CHAIN_KEY=b64:...
+./scripts/deploy.sh --no-pull                              # valida as chaves; todos os serviços leem as duas
+# 4. Re-cifre tudo com a nova chave (idempotente; pode repetir se interromper)
+$C exec backend python -m app.keys_cli reencrypt --dry-run # decifra/cifra tudo sem gravar
+$C exec backend python -m app.keys_cli reencrypt           # "failed": [] e "pending": 0
+$C exec backend python -m app.keys_cli status              # exit 0 = nada na chave antiga
+$C exec backend python -m app.audit_cli verify             # cadeia de auditoria continua "ok"
+# 5. Remova a antiga do .env (MASTER_ENCRYPTION_KEYS_PREVIOUS=) e ./scripts/deploy.sh --no-pull
+```
+
+- `failed` lista `tabela.coluna:id: erro` (nunca o valor): o valor foi cifrado com uma chave fora do keyring
+  (ex.: perdida). Essa conta precisa ter as chaves de API recadastradas (ou o usuário refazer o 2FA).
+- **Backups antigos** continuam cifrados com a chave antiga: mantenha-a no cofre enquanto houver backup dentro da
+  retenção (`BACKUP_RETENTION_DAYS`); para restaurar um deles, coloque-a de volta em `MASTER_ENCRYPTION_KEYS_PREVIOUS`
+  e rode o `reencrypt` após o restore.
+- Se a chave **vazou**: rotacione assim **e** revogue/recrie as chaves de API na corretora ([4.12](#credenciais-vazadas)) —
+  quem tem a chave antiga e um dump do banco ainda lê os valores antigos.
+- Novas colunas cifradas precisam ser registradas em `backend/app/services/key_rotation.py` (um teste garante).
+
+<a id="rotacao-redis"></a>
+### 10.2 Rotação da senha do Redis
+O container `redis` e os clientes leem a senha do mesmo `.env`; troque e recrie todos juntos (filas e chaves são
+mantidas no volume — o Redis não guarda a senha no disco):
+```bash
+python3 -c "import secrets; print(secrets.token_hex(24))"   # -> REDIS_PASSWORD no .env
+./scripts/deploy.sh --no-pull     # recria redis + backend + workers + beat + streams (+ redis_exporter)
+$C exec redis /opt/isctrade/cli.sh ping                      # PONG
+```
