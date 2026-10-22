@@ -62,6 +62,17 @@
 3. O executor é escolhido por conta (`build_executor`); o `LiveExecutor` recebe o adaptador da exchange da conta
    (`client_for_account` → `app.exchanges.registry.adapter_for_account`):
    - **`PaperExecutor` (padrão)** — preenchimento simulado com taxa e slippage configuráveis, stops simulados, ledger de paper na própria conta.
+     Realismo opcional (padrão desligado = comportamento otimista histórico):
+     - `PAPER_MAX_VOLUME_PCT` limita cada preenchimento a essa % do volume do candle de referência (entradas de bots:
+       último candle fechado do timeframe; LIMIT pendentes: último candle de 1m, lido da API pública só quando a
+       ordem cruza). O restante de uma MARKET **expira** (`EXPIRED`, `executed_qty` < `quantity`); uma LIMIT fica
+       `PARTIALLY_FILLED` e continua sendo preenchida nas próximas verificações. Saídas *reduce-only* (stop, TP,
+       fechar) **nunca** são limitadas. Evento de auditoria `order.partial_fill`.
+     - `PAPER_LIMIT_THROUGH_BPS` exige que o preço **atravesse** a LIMIT em N bps (aproxima a posição na fila) em vez
+       de preencher ao apenas tocar.
+     - Stops simulados nos candles dos bots preenchem no **stop ou na abertura do candle, o que for pior** (*gap*),
+       com slippage — o mesmo modelo do backtest. As verificações SL/TP de `paper.process_orders` já usam o preço de
+       marcação corrente (que inclui o *gap*).
    - **`LiveExecutor`** — somente se `LIVE_TRADING_ENABLED=true` **e** a conta estiver em `execution_mode=live`. Envia a ordem + `STOP_MARKET` *reduce-only* à Binance.
 4. User data stream (WebSocket) + `Reconciler` mantêm ordens, execuções e posições consistentes com a corretora.
 5. `equity` grava snapshots usados no dashboard e nas regras de perda diária/drawdown; ao estourar o drawdown a conta vira `killed` (e, se `KILL_SWITCH_CLOSE_POSITIONS=true`, as posições são encerradas com ordens *reduce-only*).

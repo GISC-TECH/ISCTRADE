@@ -15,6 +15,7 @@ from decimal import Decimal
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models import Account, AccountStatus, ExecutionMode, Order, OrderSide, OrderStatus, OrderType, Position
 from app.services import prices
 from app.services.audit import log_event
@@ -36,13 +37,35 @@ price_source: PriceSource = _default_price
 class PaperOrderReport:
     filled: int = 0
     canceled: int = 0
+    partial: int = 0
     stops: int = 0
     take_profits: int = 0
     errors: list[str] = field(default_factory=list)
 
 
-def limit_crossed(side: OrderSide, limit: Decimal, price: Decimal) -> bool:
-    return price <= limit if side == OrderSide.BUY else price >= limit
+async def _default_volume(symbol: str, testnet: bool) -> Decimal | None:
+    """Volume (base asset) of the last closed 1m candle: the liquidity reference for paper LIMIT fills."""
+    from app.exchanges.registry import public_adapter
+
+    client = public_adapter(testnet)
+    try:
+        rows = await client.get_klines(symbol, "1m", limit=2)
+    except Exception as exc:  # noqa: BLE001 - unknown liquidity -> uncapped fill (historical behaviour)
+        logger.warning("paper volume reference unavailable for %s: %s", symbol, exc)
+        return None
+    finally:
+        await client.close()
+    return Decimal(str(rows[-2][5])) if len(rows) >= 2 else None
+
+
+VolumeSource = Callable[[str, bool], Awaitable[Decimal | None]]
+volume_source: VolumeSource = _default_volume
+
+
+def limit_crossed(side: OrderSide, limit: Decimal, price: Decimal, through_bps: Decimal = Decimal(0)) -> bool:
+    """A paper LIMIT fills once the price touches it, or trades ``through_bps`` beyond it (queue-position proxy)."""
+    margin = limit * through_bps / Decimal(10000)
+    return price <= limit - margin if side == OrderSide.BUY else price >= limit + margin
 
 
 def exit_trigger(pos: Position, price: Decimal) -> str | None:
@@ -62,8 +85,8 @@ async def process_account(db: AsyncSession, account: Account, *, global_kill: bo
     resting = list(
         await db.scalars(
             select(Order).where(
-                Order.account_id == account.id, Order.is_paper.is_(True), Order.status == OrderStatus.NEW,
-                Order.type == OrderType.LIMIT,
+                Order.account_id == account.id, Order.is_paper.is_(True),
+                Order.status.in_((OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED)), Order.type == OrderType.LIMIT,
             )
         )
     )  # fmt: skip
@@ -85,6 +108,8 @@ async def process_account(db: AsyncSession, account: Account, *, global_kill: bo
         symbol: Decimal(price) for symbol, price in zip(ordered, found, strict=True) if price is not None and price > 0
     }
     blocked = global_kill or account.status == AccountStatus.KILLED
+    through = Decimal(str(settings.PAPER_LIMIT_THROUGH_BPS))
+    volumes: dict[str, Decimal | None] = {}
 
     for order in resting:
         if blocked and not order.reduce_only:
@@ -97,15 +122,23 @@ async def process_account(db: AsyncSession, account: Account, *, global_kill: bo
             )  # fmt: skip
             continue
         price = marks.get(order.symbol)
-        if price is None or order.price is None or not limit_crossed(order.side, Decimal(order.price), price):
+        if price is None or order.price is None or not limit_crossed(order.side, Decimal(order.price), price, through):
             continue
+        cap = None
+        if executor.max_volume_pct > 0 and not order.reduce_only:
+            if order.symbol not in volumes:
+                volumes[order.symbol] = await volume_source(order.symbol, account.is_testnet)
+            cap = executor.volume_cap(order.symbol, volumes[order.symbol])
+        remaining = Decimal(order.quantity) - Decimal(order.executed_qty or 0)
         res = await executor.execute(
-            db, account, None, order.symbol, order.side, Decimal(order.quantity), Decimal(order.price),
+            db, account, None, order.symbol, order.side, remaining, Decimal(order.price),
             stop_loss=order.stop_loss, take_profit=order.take_profit, reduce_only=order.reduce_only,
             leverage=order.leverage, tag=order.reason or "limit", fill_price=Decimal(order.price),
-            order_type=OrderType.LIMIT, limit_price=Decimal(order.price), resting_order=order,
+            order_type=OrderType.LIMIT, limit_price=Decimal(order.price), resting_order=order, max_fill_qty=cap,
         )  # fmt: skip
-        if res.ok:
+        if res.ok and order.status == OrderStatus.PARTIALLY_FILLED:
+            report.partial += 1
+        elif res.ok:
             report.filled += 1
             await log_event(
                 db, "order.filled", workspace_id=account.workspace_id, account_id=account.id, symbol=order.symbol,
@@ -116,6 +149,9 @@ async def process_account(db: AsyncSession, account: Account, *, global_kill: bo
             order.status, order.reason = OrderStatus.CANCELED, res.reason[:255]
             report.canceled += 1
 
+    # Flush the LIMIT fills first: refresh() discards unflushed changes, which silently dropped a fill that added to a
+    # position already holding SL/TP (the trade row was kept, the position quantity was not).
+    await db.flush()
     for pos in positions:
         await db.refresh(pos)
         price = marks.get(pos.symbol)

@@ -16,7 +16,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, replace
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Protocol
 
 from sqlalchemy import inspect as sa_inspect
@@ -152,16 +152,45 @@ class Executor(Protocol):
     ) -> ExecutionResult: ...
 
 
+PAPER_QTY_STEP = Decimal("0.00000001")
+
+
+def gap_stop_price(position_qty: Decimal, stop: Decimal, candle_open: Decimal, slippage: Decimal) -> Decimal:
+    """Paper/backtest stop fill: the stop price, or the candle open when the price gapped through it, +/- slippage."""
+    if position_qty > 0:
+        return min(stop, candle_open) * (1 - slippage)
+    return max(stop, candle_open) * (1 + slippage)
+
+
 class PaperExecutor:
     """Simulated market fills at `ref_price` +/- slippage, taker fee charged on notional."""
 
     is_paper = True
 
-    def __init__(self, fee_rate: Decimal | None = None, slippage_bps: Decimal | None = None) -> None:
+    def __init__(
+        self,
+        fee_rate: Decimal | None = None,
+        slippage_bps: Decimal | None = None,
+        max_volume_pct: Decimal | None = None,
+    ) -> None:
         self.fee_rate = fee_rate if fee_rate is not None else Decimal(str(settings.PAPER_TAKER_FEE))
         self.slippage = (
             slippage_bps if slippage_bps is not None else Decimal(str(settings.PAPER_SLIPPAGE_BPS))
         ) / Decimal(10000)
+        self.max_volume_pct = (
+            max_volume_pct if max_volume_pct is not None else Decimal(str(settings.PAPER_MAX_VOLUME_PCT))
+        )
+        # symbol -> reference volume (base asset) of the last closed candle, set by the bot runner each tick
+        self.liquidity: dict[str, Decimal] = {}
+
+    def volume_cap(self, symbol: str, volume: Decimal | None = None) -> Decimal | None:
+        """Max quantity a single paper fill may take (``None`` = unlimited)."""
+        if self.max_volume_pct <= 0:
+            return None
+        vol = volume if volume is not None else self.liquidity.get(symbol)
+        if vol is None or vol <= 0:
+            return None
+        return (Decimal(vol) * self.max_volume_pct / Decimal(100)).quantize(PAPER_QTY_STEP, ROUND_DOWN)
 
     async def execute(
         self,
@@ -182,6 +211,7 @@ class PaperExecutor:
         limit_price: Decimal | None = None,
         take_profit: Decimal | None = None,
         resting_order: Order | None = None,
+        max_fill_qty: Decimal | None = None,
     ) -> ExecutionResult:
         if order_type == OrderType.LIMIT and resting_order is None:
             if limit_price is None:
@@ -206,6 +236,14 @@ class PaperExecutor:
             if not opposite:
                 return ExecutionResult(False, "reduce_only_no_position")
             quantity = min(quantity, abs(pos.quantity))
+        requested = quantity
+        if not reduce_only:  # liquidity cap (PAPER_MAX_VOLUME_PCT); exits are never capped
+            cap = max_fill_qty if max_fill_qty is not None else self.volume_cap(symbol)
+            if cap is not None and quantity > cap:
+                if cap <= 0:
+                    return ExecutionResult(False, "insufficient_liquidity")
+                quantity = cap
+        partial = quantity < requested
 
         if fill_price is None:
             slip = self.slippage if side == OrderSide.BUY else -self.slippage
@@ -215,9 +253,14 @@ class PaperExecutor:
 
         if resting_order is not None:
             order = resting_order
-            order.status, order.executed_qty, order.avg_price, order.quantity = (
-                OrderStatus.FILLED, quantity, fill_price, quantity,
-            )  # fmt: skip
+            prev = Decimal(order.executed_qty or 0)
+            total = prev + quantity
+            order.avg_price = (prev * Decimal(order.avg_price or 0) + quantity * fill_price) / total
+            order.executed_qty = total
+            if partial:
+                order.status = OrderStatus.PARTIALLY_FILLED  # keeps resting for the remainder
+            else:
+                order.status, order.quantity = OrderStatus.FILLED, total
         else:
             order = Order(
                 workspace_id=account.workspace_id,
@@ -226,8 +269,9 @@ class PaperExecutor:
                 symbol=symbol,
                 side=side,
                 type=order_type,
-                status=OrderStatus.FILLED,
-                quantity=quantity,
+                # partial MARKET fill: the remainder expires (like an IOC on a thin book)
+                status=OrderStatus.EXPIRED if partial else OrderStatus.FILLED,
+                quantity=requested,
                 price=limit_price if order_type == OrderType.LIMIT else None,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
@@ -271,6 +315,12 @@ class PaperExecutor:
             if take_profit is not None:
                 pos.take_profit = take_profit
         account.paper_balance = Decimal(account.paper_balance) + outcome.realized_pnl - fee
+        if partial:
+            await log_event(
+                db, "order.partial_fill", workspace_id=account.workspace_id, account_id=account.id, symbol=symbol,
+                side=side, requested=requested, filled=quantity, price=fill_price, tag=tag, paper=True,
+                remainder="resting" if order.status == OrderStatus.PARTIALLY_FILLED else "expired",
+            )  # fmt: skip
         return ExecutionResult(True, "filled", order, fill_price, quantity, outcome.realized_pnl, fee)
 
 

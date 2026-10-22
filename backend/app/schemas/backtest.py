@@ -20,6 +20,8 @@ class BacktestConfigIn(BaseModel):
     max_daily_loss_pct: float = Field(3, gt=0, le=100)
     max_drawdown_pct: float = Field(15, gt=0, le=100)
     stop_on_kill_switch: bool = True
+    # 0 = off; else each entry fills at most this % of the signal candle volume (rest expires)
+    max_volume_pct: float = Field(0, ge=0, le=100)
 
 
 class BacktestFiltersIn(BaseModel):

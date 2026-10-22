@@ -21,6 +21,7 @@ from app.services.execution import (
     OrderService,
     PaperExecutor,
     build_executor,
+    gap_stop_price,
     get_position,
     is_global_kill_switch_on,
 )
@@ -239,6 +240,8 @@ class BotRunner:
             return None, "no_new_candle"
         new_candles = [c for c in candles if last_seen is None or c.open_time > int(last_seen)]
         price = Decimal(str(last.close))
+        if isinstance(self.executor, PaperExecutor):
+            self.executor.liquidity[symbol] = Decimal(str(last.volume))  # PAPER_MAX_VOLUME_PCT reference
 
         if self.client is not None:
             from app.services.reconciler import Reconciler
@@ -250,7 +253,10 @@ class BotRunner:
         if isinstance(self.executor, PaperExecutor) and pos is not None and pos.quantity != 0:
             for c in new_candles:
                 if stop_triggered(pos.quantity, pos.stop_loss, Decimal(str(c.low)), Decimal(str(c.high))):
-                    stop_price = Decimal(pos.stop_loss)
+                    # gap through the stop -> fill at the candle open (worse), +/- slippage, as in the backtest
+                    stop_price = gap_stop_price(
+                        Decimal(pos.quantity), Decimal(pos.stop_loss), Decimal(str(c.open)), self.executor.slippage
+                    )
                     side = OrderSide.SELL if pos.quantity > 0 else OrderSide.BUY
                     await self.executor.execute(
                         self.db, account, bot, symbol, side, abs(pos.quantity), stop_price,

@@ -9,6 +9,8 @@ Execution model (documented assumptions):
 - Optional take profits (``OrderIntent.take_profit``) are checked after the stop (if a candle touches both, the
   stop wins: pessimistic) and fill at the take-profit price -/+ slippage (no favourable gap fills).
 - Fees are charged on notional for every fill (taker rate by default).
+- Optional liquidity cap (``max_volume_pct`` > 0): an entry fills at most that % of the signal candle volume; the
+  rest expires (counted in ``partial_fills``). Exits are never capped.
 - Funding (optional, ``funding=[FundingEvent]``): at each funding timestamp inside a candle the position held at
   the candle open pays/receives ``qty * price * rate`` (long pays a positive rate), with ``price`` interpolated
   between the candle open and close. See app/backtest/funding.py for the data sources.
@@ -49,6 +51,8 @@ class BacktestConfig:
     max_daily_loss_pct: Decimal = Decimal("3")
     max_drawdown_pct: Decimal = Decimal("15")
     stop_on_kill_switch: bool = True
+    # 0 = off; else each entry fills at most this % of the signal candle volume (the rest expires, like paper)
+    max_volume_pct: Decimal = Decimal("0")
     lookback: int | None = None  # candles passed to the strategy each step (default: warmup*3, min 200)
     filters: SymbolFilters | None = None
 
@@ -163,6 +167,7 @@ class BacktestEngine:
         self.trades: list[BacktestTrade] = []
         self.rejections: dict[str, int] = {}
         self.fees = ZERO
+        self.partial_fills = 0
 
     # ------------------------------------------------------------------ #
     def equity(self, price: Decimal) -> Decimal:
@@ -218,6 +223,11 @@ class BacktestEngine:
                 self._reject("stop_loss_required")
                 return False
             qty = self.rm.max_position_size(price, intent.stop_loss, state) * intent.risk_fraction
+        if not intent.reduce_only and self.cfg.max_volume_pct > 0:
+            cap = Decimal(str(candle.volume)) * self.cfg.max_volume_pct / Decimal(100)
+            if abs(qty) > cap:
+                qty = cap
+                self.partial_fills += 1
         qty = self.filters.round_qty(abs(qty))
         if qty <= 0:
             self._reject("size_zero_after_rounding")
@@ -338,6 +348,7 @@ class BacktestEngine:
         )
         metrics["total_funding"] = round(float(self.funding_total), 4)
         metrics["funding_events_applied"] = self.funding_applied
+        metrics["partial_fills"] = self.partial_fills
         return BacktestResult(metrics, curve, self.trades, self.rejections, killed_at)
 
     def _ctx(self, candles: list[Candle], i: int, lookback: int, price: Decimal, state: dict) -> StrategyContext:

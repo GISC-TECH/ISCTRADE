@@ -101,6 +101,12 @@ class Settings(BaseSettings):
     LIVE_TRADING_ENABLED: bool = False
     PAPER_TAKER_FEE: float = 0.0004  # 0.04%
     PAPER_SLIPPAGE_BPS: float = 2.0
+    # Paper realism (0 = off, the historical optimistic behaviour). PAPER_MAX_VOLUME_PCT caps each paper fill to that
+    # % of the reference candle volume (bot entries: last closed candle; resting LIMITs: last closed 1m candle); the
+    # rest of a MARKET order expires, a LIMIT keeps resting as PARTIALLY_FILLED. Exits (reduce-only) are never capped.
+    PAPER_MAX_VOLUME_PCT: float = 0.0
+    # Paper LIMIT orders only fill once the price trades this many bps THROUGH the limit (queue-position proxy).
+    PAPER_LIMIT_THROUGH_BPS: float = 0.0
     KILL_SWITCH_CLOSE_POSITIONS: bool = True
     BOT_TICK_SECONDS: int = 30
 

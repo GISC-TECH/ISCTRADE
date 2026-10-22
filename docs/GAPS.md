@@ -72,7 +72,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | G-07 | Kill switch nunca testado em produção; runbook de go-live e de incidente incompleto (rascunho em SECURITY.md) | Operação | P1 | ✅ **Resolvido** — `docs/RUNBOOK.md` (go-live, incidentes 4.1–4.12, *drill* do kill switch global e por conta com o comportamento real, perda do servidor, rotação de segredos). O *drill* em produção continua sendo um passo do go-live a executar pelo operador | P | `ROADMAP` Fase 3; `docs/SECURITY.md` §runbook |
 | G-08 | Sincronização de relógio do host (NTP/chrony) não documentada nem monitorada (há só retry em `-1021`) | Operação | P2 | ✅ **Resolvido** — NTP/chrony no checklist de go-live e incidente 4.10 do `RUNBOOK.md`; alerta `ClockSkew` (node_exporter `node_timex_offset_seconds`) | P | `services/binance_client.py`; docs sem menção a NTP |
 | G-09 | Lock distribuído de tick é *fail-open* quando o Redis cai (pode haver ticks concorrentes) | Execução | P3 | Aceito/Parcial | P | `services/jobs.py:redis_lock` |
-| G-10a | Paper otimista: sem preenchimento parcial/profundidade; LIMIT preenche ao tocar o preço | Paper | P2 | Faltando | M | `services/paper_orders.py` |
+| G-10a | Paper otimista: sem preenchimento parcial/profundidade; LIMIT preenche ao tocar o preço | Paper | P2 | ✅ Resolvido (opcional) — `PAPER_MAX_VOLUME_PCT` (parcial por volume: MARKET expira o resto, LIMIT fica `PARTIALLY_FILLED`), `PAPER_LIMIT_THROUGH_BPS` (LIMIT precisa atravessar), stops dos bots com *gap* (abertura se pior); corrigido também um bug que descartava o preenchimento LIMIT que somava a posição com SL/TP; backtest `config.max_volume_pct`. Sem livro de ofertas real | M | `services/paper_orders.py`, `services/execution.py`; `ARCHITECTURE.md` |
 | G-10b | Hedge mode não suportado (recusado com aviso) | Execução | P3 | Faltando (por decisão) | G | `AUDIT.md` §4 item 3 |
 
 ### 2.2 Infra, deploy e operação
@@ -124,7 +124,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | F-10 | Cache local de klines (TimescaleDB opcional) | P3 | Faltando | M | `backtest/data.py`; `AGENT_GUIDE` Etapa 7 |
 | F-11 | Arquivo histórico de notícias para backtest com filtro | P3 | Faltando | M | `ROADMAP` Fase 1 |
 | F-12 | Alertas de posição ao vivo (além de aberta/fechada) | P1 | Parcial | M | ver G-06 |
-| F-13 | Paper com preenchimento parcial | P2 | Faltando | M | ver G-10a |
+| F-13 | Paper com preenchimento parcial | P2 | ✅ Resolvido (opcional, ver G-10a) | M | ver G-10a |
 | F-14 | Estratégia de funding (contrarian) | P3 | ✅ Resolvido — `funding_contrarian` (funding extremo + z-score + confirmação EMA, stop ATR); `ctx.funding` alimentado no backtest/walk-forward (sem lookahead) e nos bots (histórico público da exchange) | M | `strategy/funding.py`; `STRATEGIES.md` §Funding contrarian |
 | F-15 | WebSocket da Bybit | P3 | Faltando (adaptador só REST, experimental) | G | `exchanges/bybit.py:616` |
 | F-16 | Escolha de exchange no formulário de contas | P3 | ✅ Resolvido — seletor de corretora no formulário (lista de `GET /accounts/exchanges`; experimentais só aparecem se habilitadas, com notas; testnet desabilitado quando não suportado) | P | `frontend/app/dashboard/accounts/page.tsx` |

@@ -177,7 +177,9 @@ stop) e pausa em eventos de alto impacto ligada em todos.
 `RiskManager`, taxas e slippage. Cada estratégia técnica tem teste de unidade e um *smoke test* de backtest em
 `backend/tests/test_technical_strategies.py` (clássicas: `backend/tests/test_classic_strategies.py`). Limitações: preenchimento no fechamento do candle (com slippage),
 stops intra-candle simulados com *gap*, take profit preenchido exatamente no alvo (sem *gap* favorável), sem
-profundidade de livro.
+profundidade de livro. Opcional: `config.max_volume_pct` (0 = desligado) limita cada entrada a essa % do volume do
+candle do sinal — o restante expira, como no paper com `PAPER_MAX_VOLUME_PCT`; a métrica `partial_fills` conta os
+cortes.
 
 ### Dados (`data_source`)
 - `exchange` (padrão): klines REST da exchange configurada (mainnet pública ou Testnet).
