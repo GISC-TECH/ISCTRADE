@@ -75,6 +75,9 @@ class AuditRead(BaseModel):
     account_id: uuid.UUID | None
     ip_address: str | None
     data: dict[str, Any]
+    # tamper-evident chain (null until sealed, see app/services/audit_chain.py)
+    chain_seq: int | None = None
+    row_hash: str | None = None
 
 
 class PositionRead(BaseModel):

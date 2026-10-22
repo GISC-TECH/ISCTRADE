@@ -66,6 +66,30 @@
 - Migrações executadas por um serviço dedicado (`migrate`) antes de API e workers; o `deploy.sh` faz backup do banco antes de migrar.
 - Mantenha o host atualizado, com firewall liberando apenas 22/80/443 e acesso SSH por chave.
 
+## Trilha de auditoria à prova de adulteração
+Toda linha de `audit_logs` é **selada** em uma cadeia de hashes (`app/services/audit_chain.py`, migração `0009`):
+
+- `log_event` grava a linha sem selo (sem lock no caminho crítico); a tarefa `audit.seal` (beat, a cada
+  `AUDIT_SEAL_SECONDS`, padrão 30 s) atribui um `chain_seq` contínuo, o `prev_hash` da linha anterior e
+  `row_hash = HMAC-SHA256(chave, "v1|" + prev_hash + "|" + JSON canônico da linha)`. Selagens concorrentes são
+  serializadas por *advisory lock* do PostgreSQL e `chain_seq` é `UNIQUE` (a cadeia não bifurca).
+- No PostgreSQL um *trigger* recusa `UPDATE` de linha selada. As colunas `user_id`/`workspace_id`/`account_id`
+  deixaram de ter FK (um `CASCADE`/`SET NULL` reescreveria linhas auditadas).
+- A chave HMAC **não fica no banco** (`AUDIT_CHAIN_KEY` ou derivada da `MASTER_ENCRYPTION_KEY`): quem só tem acesso
+  de escrita ao banco não consegue refazer uma cadeia válida depois de editar/apagar linhas.
+- Verificação: `GET /api/v1/admin/audit/verify` (super-admin; `?seal=true` sela antes; `anchor_seq`+`anchor_hash`
+  conferem uma âncora externa) ou `docker compose exec backend python -m app.audit_cli verify` (código de saída 1
+  se a cadeia estiver quebrada). A tarefa `audit.verify` roda diariamente (03:17 UTC) e registra
+  `audit.chain_broken` (crítico) se encontrar problema. Erros reportados: `hash_mismatch` (linha editada),
+  `gap`/`broken_link` (linha apagada/reordenada), `bad_genesis`, `anchor_mismatch`/`anchor_missing`.
+- **Âncora externa** (recomendado): guarde periodicamente fora do servidor a saída de
+  `python -m app.audit_cli head` (`head_seq`, `head_hash`); cada selagem também registra o hash da cabeça no log.
+  Isso detecta até quem tenha a chave e reconstrua a cadeia inteira.
+- Limites: linhas ainda não seladas (últimos segundos) não estão protegidas; apagar um **prefixo** (retenção) é
+  reportado como `truncated_prefix` (não é erro, mas fica visível); rotacionar a `MASTER_ENCRYPTION_KEY` sem fixar
+  antes `AUDIT_CHAIN_KEY` invalida a verificação (confira com `python -m app.audit_cli key-fingerprint`). Um
+  superusuário do PostgreSQL pode desativar o trigger — a proteção real é o HMAC + âncora externa.
+
 ## Resposta a incidentes (runbook resumido)
 1. **Pare novas ordens**: ative o kill switch global no painel Admin (ou `POST /api/v1/admin/kill-switch`).
 2. **Encerre posições** se necessário diretamente na Binance.
@@ -76,7 +100,7 @@
 
 ## Limitações conhecidas
 - Sem 2FA no login.
-- A trilha de auditoria é armazenada no mesmo banco (não é imutável/assinada).
+- A trilha de auditoria fica no mesmo banco, mas é encadeada com HMAC e verificável (veja acima); não é WORM.
 - Sem rotação automática da `MASTER_ENCRYPTION_KEY`.
 - Alertas automáticos apenas via WhatsApp (veja [ALERTS.md](ALERTS.md)); Telegram/e-mail ainda não. Os tokens do provedor ficam só no `.env`; o worker Celery e o `streams` expõem métricas sem autenticação nas portas internas 9101/9102 (não publique essas portas).
 

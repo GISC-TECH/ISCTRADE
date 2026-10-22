@@ -101,7 +101,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | G-23 | `CORS_ORIGINS` precisa conter `https://<DOMAIN>`, senão o WebSocket é recusado (403) e o painel fica em "Reconectando…"; `.env.example` traz só localhost e o `deploy.sh` não valida | Config/Realtime | P2 | Parcial | P | `realtime_ws.py` (checagem de Origin); verificado |
 | G-24 | `orjson 3.11.5` com PYSEC-2026-107 (o AUDIT.md diz "pip-audit limpo") | Dependências | P2 | Faltando | P | `backend/requirements.txt` |
 | G-25 | `npm audit`: 7 high + 2 moderate na cadeia build-time (Tailwind 3, eslint-config-next); migrar para Tailwind 4 | Dependências | P3 | Pendente | M | `frontend/package.json` |
-| G-26 | Trilha de auditoria imutável (hash encadeado/assinatura/WORM) | Auditoria | P2 | Faltando | M | `services/audit.py`; `AGENT_GUIDE` Etapa 2 |
+| G-26 | Trilha de auditoria imutável (hash encadeado/assinatura/WORM) | Auditoria | P2 | ✅ **Resolvido** — cadeia HMAC-SHA256 selada pela tarefa `audit.seal`, trigger anti-UPDATE no PostgreSQL, sem FKs em cascata, `GET /admin/audit/verify` + `python -m app.audit_cli verify`, verificação diária (migração `0009`; `SECURITY.md` §Trilha). WORM externo continua opcional (âncora do `head`) | M | `services/audit_chain.py` |
 | G-27 | Redis sem senha; métricas 9101/9102 sem autenticação (rede interna) | Infra | P2 | Aceito/Parcial | P | `docker-compose.yml` |
 | G-28 | Reset de senha, lista/revogação de sessões por dispositivo | Auth | P2 | Faltando | M | rotas `/auth/*` |
 | G-29 | Sem rotação da `MASTER_ENCRYPTION_KEY` (re-cifrar chaves) | Cripto | P2 | Faltando | M | `SECURITY.md` §limitações |
@@ -113,7 +113,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | ID | Funcionalidade | Prio | Status | Esforço | Evidência |
 |---|---|---|---|---|---|
 | F-01 | CI (lint + testes + build) | **P0** | **Parcial** — workflow pronto, **inativo** (`.github/workflows/` não existe) | P | `docs/ci/ci.yml`; `ROADMAP` Fase 0 |
-| F-02 | Auditoria à prova de adulteração (hash chain) | P2 | Faltando | M | ver G-26 |
+| F-02 | Auditoria à prova de adulteração (hash chain) | P2 | ✅ Resolvido | M | ver G-26 |
 | F-03 | Limites de risco agregados por workspace | P0 | Faltando | M | ver G-02 |
 | F-04 | PnL por período (`/history/pnl`, gráfico 30 dias) | P2 | Faltando | M | `history.py` não tem a rota; `AGENT_GUIDE` Etapa 6 |
 | F-05 | Posições consolidadas | P2 | Parcial — `GET /history/positions` sem `account_id` já agrega o workspace, mas sem rótulo da conta e sem tabela na UI | P | `history.py:list_positions` |

@@ -23,6 +23,7 @@ from app.models import (
 from app.schemas.common import Page
 from app.schemas.history import AuditRead
 from app.schemas.user import AdminUserUpdate, UserRead
+from app.services import audit_chain
 from app.services.audit import log_event
 from app.services.kill_switch import get_global_kill_switch, set_global_kill_switch
 
@@ -159,3 +160,24 @@ async def global_audit(
     if level:
         stmt = stmt.where(AuditLog.level == level)
     return await paginate(db, stmt, page, AuditLog.created_at.desc())
+
+
+@router.get("/audit/verify")
+async def verify_audit_chain(
+    seal: bool = False,
+    anchor_seq: int | None = None,
+    anchor_hash: str | None = None,
+    admin: User = Depends(require_superadmin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Verifica a trilha de auditoria encadeada (HMAC). `seal=true` sela antes as linhas pendentes.
+
+    `anchor_seq` + `anchor_hash` conferem contra uma âncora externa (hash da cabeça guardado fora do banco).
+    """
+    if (anchor_seq is None) != (anchor_hash is None):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "anchor_seq e anchor_hash devem ser informados juntos")
+    if seal:
+        await audit_chain.seal_pending(db)
+    anchor = (anchor_seq, anchor_hash) if anchor_seq is not None and anchor_hash is not None else None
+    report = await audit_chain.verify_chain(db, expected_head=anchor)
+    return report.as_dict()

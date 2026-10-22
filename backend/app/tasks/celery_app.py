@@ -14,6 +14,7 @@ celery_app = Celery(
         "app.tasks.scanner_tasks",
         "app.tasks.news_tasks",
         "app.tasks.trading_tasks",
+        "app.tasks.audit_tasks",
     ],
 )
 # Queues: trading-critical work (bot ticks, paper order book, reconciliation, equity/risk) never waits behind
@@ -31,6 +32,7 @@ TASK_ROUTES = {
     "news.*": {"queue": DEFAULT_QUEUE},
     "calendar.*": {"queue": DEFAULT_QUEUE},
     "alerts.*": {"queue": DEFAULT_QUEUE},
+    "audit.*": {"queue": DEFAULT_QUEUE},
 }
 
 celery_app.conf.update(
@@ -62,6 +64,8 @@ celery_app.conf.update(
         "calendar-refresh": {"task": "calendar.refresh", "schedule": float(settings.ECON_CALENDAR_REFRESH_SECONDS)},
         "calendar-alerts": {"task": "calendar.alerts", "schedule": 60.0},
         "paper-orders": {"task": "paper.process_orders", "schedule": float(settings.PAPER_ORDER_CHECK_SECONDS)},
+        "audit-seal": {"task": "audit.seal", "schedule": float(settings.AUDIT_SEAL_SECONDS)},
+        "audit-verify": {"task": "audit.verify", "schedule": crontab(hour=3, minute=17)},
         "alerts-daily-summary": {
             "task": "alerts.daily_summary",
             "schedule": crontab(hour=settings.ALERT_DAILY_SUMMARY_HOUR_UTC, minute=5),

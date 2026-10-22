@@ -190,6 +190,10 @@ class Settings(BaseSettings):
     WHATSAPP_TO: Annotated[list[str], NoDecode] = []  # default recipients (E.164, comma-separated)
     WHATSAPP_TIMEOUT_SECONDS: float = 10.0
 
+    # Tamper-evident audit trail (app/services/audit_chain.py). Empty key = derived from MASTER_ENCRYPTION_KEY.
+    AUDIT_CHAIN_KEY: str = ""
+    AUDIT_SEAL_SECONDS: int = 30
+
     # Risk defaults
     RISK_MAX_RISK_PER_TRADE_PCT: float = 1.0
     RISK_MAX_LEVERAGE: int = 5
