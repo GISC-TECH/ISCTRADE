@@ -104,7 +104,7 @@ Serviços: `caddy`, `frontend`, `migrate` (executa `alembic upgrade head` e ence
   `docker compose --profile monitoring up -d` → http://localhost:9090, :9093 e :3001 (defina `GRAFANA_ADMIN_PASSWORD` no `.env`); regras de alerta e roteamento para WhatsApp/webhook em [infra/monitoring/README.md](infra/monitoring/README.md)
 - Alertas via WhatsApp: preencha `WHATSAPP_*` no `.env` (ex.: `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER=wago`, `WHATSAPP_API_TOKEN`, `WHATSAPP_TO`) — passo a passo em [docs/ALERTS.md](docs/ALERTS.md)
 
-Crie o super-admin pela CLI: `docker compose exec backend python -m app.cli create-admin --email voce@exemplo.com` (pede a senha). Outros usuários: `REGISTRATION_MODE=invite` + convites de uso único (painel Admin → `POST /api/v1/admin/invites` ou `python -m app.cli create-invite`). Depois, em **Contas**, conecte uma conta (Testnet + paper por padrão) e crie bots em **Bots**.
+Crie o super-admin pela CLI: `docker compose exec backend python -m app.cli create-admin --email voce@exemplo.com` (pede a senha). Outros usuários: `REGISTRATION_MODE=invite` + convites de uso único (painel **Admin → Convites**, que mostra o link `/auth/register?invite=…` uma única vez, ou `python -m app.cli create-invite`). Depois, em **Contas**, conecte uma conta (Testnet + paper por padrão) e crie bots em **Bots**.
 
 ### Backend sem Docker
 
@@ -119,7 +119,7 @@ TEST_POSTGRES_URL=postgresql+asyncpg://user:senha@localhost:5432/test pytest tes
 
 # Com PostgreSQL e Redis acessíveis (ajuste DATABASE_URL/REDIS_URL no ambiente):
 alembic upgrade head
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --timeout-keep-alive 130  # keep-alive > pool do proxy do Next (evita "socket hang up")
 celery -A app.tasks.celery_app worker --loglevel=info
 celery -A app.tasks.celery_app beat --loglevel=info
 python -m app.workers.streams
@@ -133,8 +133,13 @@ Nova migração após alterar modelos: `alembic revision --autogenerate -m "desc
 cd frontend
 npm ci
 BACKEND_INTERNAL_URL=http://localhost:8000 npm run dev   # http://localhost:3000; /api/* é encaminhado ao backend
-npm run lint && npx tsc --noEmit && npm run build
+npm run lint && npm run typecheck && npm test && npm run build
 ```
+
+Testes do frontend: `npm test` roda os unitários/componentes (Vitest + Testing Library, `tests/unit/`); `npm run test:e2e`
+roda o *smoke* Playwright (`e2e/smoke.spec.ts`: cadastro → aviso → 2FA → login em duas etapas → dashboard → Tempo real)
+contra uma instância **com banco descartável** e `REGISTRATION_MODE=open` (o teste cria usuários pelo cadastro): `E2E_BASE_URL=http://localhost:3000 npm run test:e2e`
+(use `PW_CHANNEL=chrome` para o Chrome instalado ou `npx playwright install chromium` antes).
 
 Em desenvolvimento sem HTTPS, use `COOKIE_SECURE=false` no backend.
 
