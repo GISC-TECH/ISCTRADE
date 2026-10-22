@@ -297,8 +297,9 @@ async def set_leverage(
     db: AsyncSession, account: Account, symbol: str, leverage: int, user_id: uuid.UUID | None
 ) -> int:
     symbol = symbol.upper()
-    if leverage < 1 or leverage > account.max_leverage:
-        raise ManualTradingError(422, f"Alavancagem fora do limite da conta (1..{account.max_leverage}x)")
+    max_lev = min(int(account.max_leverage), int(settings.RISK_MAX_LEVERAGE_CAP))
+    if leverage < 1 or leverage > max_lev:
+        raise ManualTradingError(422, f"Alavancagem fora do limite da conta (1..{max_lev}x)")
     await _assert_can_open(db, account)
     if _is_live(account):
         _check_live_enabled(account)

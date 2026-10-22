@@ -58,6 +58,12 @@ def _fmt(value: Decimal | float | str | None) -> str | None:
 ERR_TIMESTAMP = -1021  # timestamp outside recvWindow (clock skew)
 ERR_UNKNOWN_STATUS = -1007  # "Timeout waiting for response from backend server. Send status unknown"
 CONDITIONAL_TYPES = frozenset({"STOP", "STOP_MARKET", "TAKE_PROFIT", "TAKE_PROFIT_MARKET", "TRAILING_STOP_MARKET"})
+# Income types that move money into/out of the futures wallet (not trading results).
+TRANSFER_INCOME_TYPES = frozenset({
+    "TRANSFER", "INTERNAL_TRANSFER", "CROSS_COLLATERAL_TRANSFER", "STRATEGY_UMFUTURES_TRANSFER",
+    "COIN_SWAP_DEPOSIT", "COIN_SWAP_WITHDRAW",
+})  # fmt: skip
+_BRACKETS_CACHE: dict[tuple, tuple[float, list[dict]]] = {}
 GET_RETRIES = 2
 GET_RETRY_BACKOFF = 0.25
 RECOVERY_DELAYS = (0.5, 1.0, 2.0)
@@ -375,6 +381,31 @@ class BinanceFuturesClient(ExchangeAdapter):
             last = int(page[-1].get("time") or cursor)
             cursor = last if last > cursor else cursor + 1  # a full page within one millisecond: move on
         logger.warning("income history truncated after %d pages since %s", self.INCOME_MAX_PAGES, start_time)
+
+    async def get_transfers(self, start_time: int, end_time: int | None = None) -> list[dict]:
+        """Wallet transfers in/out of USDT-M futures (income types in ``TRANSFER_INCOME_TYPES``)."""
+        out: list[dict] = []
+        async for row in self.iter_income(start_time=start_time, end_time=end_time):
+            if row.get("incomeType") in TRANSFER_INCOME_TYPES:
+                out.append({
+                    "time": int(row.get("time") or 0), "amount": str(row.get("income", "0")),
+                    "asset": row.get("asset") or "USDT", "type": row.get("incomeType"), "tranId": row.get("tranId"),
+                })  # fmt: skip
+        return out
+
+    async def get_leverage_brackets(self, symbol: str) -> list[dict]:
+        """``GET /fapi/v1/leverageBracket`` (signed; brackets can differ per user), cached per key and symbol."""
+        key = (self.base_url, hashlib.sha256(self._api_key.encode()).hexdigest()[:16], symbol)
+        hit = _BRACKETS_CACHE.get(key)
+        now = time.monotonic()
+        if hit is not None and hit[0] > now:
+            return hit[1]
+        data = await self._request("GET", "/fapi/v1/leverageBracket", {"symbol": symbol}, signed=True)
+        rows = data if isinstance(data, list) else [data]
+        entry = next((r for r in rows if isinstance(r, dict) and r.get("symbol") == symbol), rows[0] if rows else {})
+        brackets = sorted(entry.get("brackets") or [], key=lambda b: Decimal(str(b.get("notionalFloor", 0))))
+        _BRACKETS_CACHE[key] = (now + settings.LEVERAGE_BRACKETS_CACHE_SECONDS, brackets)
+        return brackets
 
     async def get_user_trades(
         self, symbol: str, start_time: int | None = None, from_id: int | None = None, limit: int = 500

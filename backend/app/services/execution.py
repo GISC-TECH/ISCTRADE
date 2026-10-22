@@ -63,6 +63,23 @@ class ExecutionResult:
     kill_switch: bool = False
 
 
+def bracket_params(brackets: list[dict], notional: Decimal) -> dict | None:
+    """OrderRequest kwargs (maint margin rate, cum, max leverage) of the bracket that contains `notional`."""
+    chosen = None
+    for b in brackets:
+        chosen = b
+        if Decimal(str(b.get("notionalCap", "0") or "0")) > notional:
+            break
+    if not chosen or chosen.get("maintMarginRatio") in (None, ""):
+        return None
+    lev = chosen.get("initialLeverage")
+    return {
+        "maint_margin_rate": Decimal(str(chosen["maintMarginRatio"])),
+        "maint_amount": Decimal(str(chosen.get("cum", "0") or "0")),
+        "bracket_max_leverage": int(lev) if lev else None,
+    }
+
+
 def new_client_order_id() -> str:
     return f"btp-{uuid.uuid4().hex[:28]}"
 
@@ -523,6 +540,7 @@ class OrderService:
             stop_loss=stop,
             leverage=leverage,
             reduce_only=intent.reduce_only,
+            **({} if intent.reduce_only else await self._bracket(symbol, qty * risk_price)),
         )
         if not intent.reduce_only:
             used = await self._used_margin(db, account, symbol, intent.side)
@@ -579,6 +597,22 @@ class OrderService:
         else:
             await self._reject(db, account, bot, intent, symbol, qty, leverage, result.reason)
         return result
+
+    async def _bracket(self, symbol: str, notional: Decimal) -> dict:
+        """Maintenance margin (and max leverage) of the exchange bracket for `notional`, for the liquidation check.
+
+        Live: the account's leverage brackets; paper or unavailable brackets: RISK_DEFAULT_MAINT_MARGIN_RATE.
+        """
+        default = {"maint_margin_rate": Decimal(str(settings.RISK_DEFAULT_MAINT_MARGIN_RATE))}
+        client = getattr(self.executor, "client", None)
+        if client is None or self.executor.is_paper:
+            return default
+        try:
+            brackets = await client.get_leverage_brackets(symbol)
+        except Exception as exc:  # unsupported adapter / API error: conservative default, never block on it
+            logger.warning("leverage brackets unavailable for %s: %s", symbol, exc)
+            return default
+        return bracket_params(brackets, notional) or default
 
     @staticmethod
     async def _used_margin(db: AsyncSession, account: Account, symbol: str, side: OrderSide) -> Decimal:

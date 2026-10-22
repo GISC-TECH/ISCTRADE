@@ -189,6 +189,17 @@ class ExchangeAdapter(ABC):
     async def get_realized_pnl(self, start_time: int, end_time: int | None = None) -> Decimal:
         """Realized PnL + commissions + funding since ``start_time`` (ms)."""
 
+    async def get_leverage_brackets(self, symbol: str) -> list[dict]:
+        """Notional brackets of ``symbol``: ``[{"notionalFloor", "notionalCap", "maintMarginRatio", "cum",
+        "initialLeverage"}]`` (ascending). Optional: services fall back to a default maintenance margin."""
+        raise UnsupportedFeatureError("leverage brackets", self.exchange_id)
+
+    async def get_transfers(self, start_time: int, end_time: int | None = None) -> list[dict]:
+        """Deposits/withdrawals of the futures wallet since ``start_time`` (ms):
+        ``[{"time" (ms), "amount" (signed: + deposit, - withdrawal), "asset", "type", "tranId"}]``.
+        Optional: risk baselines are not adjusted for transfers when unsupported."""
+        raise UnsupportedFeatureError("transfer history", self.exchange_id)
+
     @abstractmethod
     async def get_user_trades(
         self, symbol: str, start_time: int | None = None, from_id: int | None = None, limit: int = 500

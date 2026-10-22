@@ -75,7 +75,7 @@ async def test_trader_cannot_loosen_risk_limits(client) -> None:
     h = {**trader, "X-Workspace-ID": ws_id}
     body = {"label": "T", "api_key": "placeholder-key-1234", "api_secret": "placeholder-secret-5678"}
     # creating with limits above the server defaults needs admin
-    r = await client.post("/api/v1/accounts/", json={**body, "max_leverage": 50}, headers=h)
+    r = await client.post("/api/v1/accounts/", json={**body, "max_leverage": 10}, headers=h)
     assert r.status_code == 403
     r = await client.post("/api/v1/accounts/", json=body, headers=h)
     assert r.status_code == 201

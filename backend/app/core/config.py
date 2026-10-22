@@ -195,6 +195,15 @@ class Settings(BaseSettings):
     RISK_MAX_LEVERAGE: int = 5
     RISK_MAX_DAILY_LOSS_PCT: float = 3.0
     RISK_MAX_DRAWDOWN_PCT: float = 15.0
+    # Hard leverage ceiling for every account/bot/manual order (account max_leverage is clamped to it). The
+    # schema refuses values above 50 no matter what this is set to.
+    RISK_MAX_LEVERAGE_CAP: int = Field(20, ge=1, le=50)
+    # Liquidation guard: the stop must sit at most this fraction of the way from entry to the estimated
+    # liquidation price (0.8 = the stop triggers with >= 20% of the distance to liquidation still left).
+    RISK_STOP_MAX_LIQ_DISTANCE_RATIO: float = Field(0.8, gt=0, le=1)
+    # Maintenance margin rate used when the exchange brackets are unavailable (paper, adapters without brackets).
+    RISK_DEFAULT_MAINT_MARGIN_RATE: float = Field(0.01, ge=0, lt=1)
+    LEVERAGE_BRACKETS_CACHE_SECONDS: int = 3600
 
     @field_validator(
         "CORS_ORIGINS",

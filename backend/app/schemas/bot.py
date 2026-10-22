@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.enums import BotState
 from app.schemas.backtest import SYMBOL_PATTERN
 from app.schemas.bot_options import BotOptions
+from app.schemas.common import Leverage
 
 INTERVALS = r"^(1m|3m|5m|15m|30m|1h|2h|4h|6h|8h|12h|1d)$"
 
@@ -17,7 +18,7 @@ class BotCreate(BaseModel):
     strategy_key: str
     symbol: str = Field(pattern=SYMBOL_PATTERN)
     interval: str = Field("1h", pattern=INTERVALS)
-    leverage: int = Field(1, ge=1, le=125)
+    leverage: Leverage = 1
     params: dict[str, Any] = Field(default_factory=dict)
     options: BotOptions = Field(default_factory=BotOptions)
 
@@ -25,7 +26,7 @@ class BotCreate(BaseModel):
 class BotUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
     interval: str | None = Field(None, pattern=INTERVALS)
-    leverage: int | None = Field(None, ge=1, le=125)
+    leverage: Leverage | None = None
     params: dict[str, Any] | None = None
     options: BotOptions | None = None
     is_enabled: bool | None = None

@@ -5,6 +5,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import AccountStatus, ExecutionMode
+from app.schemas.common import Leverage
 
 
 class AccountCreate(BaseModel):
@@ -15,7 +16,7 @@ class AccountCreate(BaseModel):
     is_testnet: bool = True
     execution_mode: ExecutionMode = ExecutionMode.PAPER
     paper_initial_balance: Decimal = Field(Decimal("10000"), gt=0, le=Decimal("100000000"))
-    max_leverage: int = Field(5, ge=1, le=125)
+    max_leverage: Leverage = 5
     max_risk_per_trade_pct: Decimal = Field(Decimal("1"), gt=0, le=100)
     max_daily_loss_pct: Decimal = Field(Decimal("3"), gt=0, le=100)
     max_drawdown_pct: Decimal = Field(Decimal("15"), gt=0, le=100)
@@ -34,7 +35,7 @@ class AccountUpdate(BaseModel):
     label: str | None = Field(None, min_length=1, max_length=120)
     execution_mode: ExecutionMode | None = None
     is_testnet: bool | None = None
-    max_leverage: int | None = Field(None, ge=1, le=125)
+    max_leverage: Leverage | None = None
     max_risk_per_trade_pct: Decimal | None = Field(None, gt=0, le=100)
     max_daily_loss_pct: Decimal | None = Field(None, gt=0, le=100)
     max_drawdown_pct: Decimal | None = Field(None, gt=0, le=100)

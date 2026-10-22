@@ -127,9 +127,14 @@ async def test_live_executor_with_mocked_binance(db, monkeypatch) -> None:
     calls: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(request)
         q = dict(request.url.params)
         assert "signature" in q and request.headers["X-MBX-APIKEY"] == "k"
+        if request.url.path == "/fapi/v1/leverageBracket":  # liquidation check (cached per key/symbol)
+            return httpx.Response(200, json=[{"symbol": q["symbol"], "brackets": [
+                {"bracket": 1, "initialLeverage": 50, "notionalCap": 50000, "notionalFloor": 0,
+                 "maintMarginRatio": 0.004, "cum": 0},
+            ]}])  # fmt: skip
+        calls.append(request)
         if q["type"] == "MARKET":
             return httpx.Response(
                 200, json={"orderId": 1, "status": "FILLED", "executedQty": q["quantity"], "avgPrice": "100.5"}

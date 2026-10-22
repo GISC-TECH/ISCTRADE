@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from app.models import OrderSide
+from app.schemas.common import Leverage
 from app.schemas.history import OrderRead
 
 
@@ -25,7 +26,7 @@ class ManualOrderCreate(_SymbolModel):
     price: Decimal | None = Field(default=None, gt=0, description="Obrigatório para LIMIT")
     stop_loss: Decimal = Field(gt=0, description="Stop loss obrigatório")
     take_profit: Decimal | None = Field(default=None, gt=0)
-    leverage: int | None = Field(default=None, ge=1, le=125)
+    leverage: Leverage | None = None
     confirm: bool = Field(description="Precisa ser true (confirmação explícita no painel)")
 
 
@@ -39,7 +40,7 @@ class CloseAllRequest(BaseModel):
 
 
 class LeverageRequest(_SymbolModel):
-    leverage: int = Field(ge=1, le=125)
+    leverage: Leverage
     confirm: bool
 
 

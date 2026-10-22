@@ -5,7 +5,8 @@ Rules (evaluated in this order):
   1. Drawdown kill switch  - equity fell more than `max_drawdown_pct` from peak -> block everything.
   2. Max daily loss        - loss since start of day >= `max_daily_loss_pct` -> block new orders.
   3. Mandatory stop loss   - every opening order needs a stop loss on the correct side of entry.
-  4. Leverage limit        - leverage <= `max_leverage`.
+  4. Leverage limit        - leverage <= min(`max_leverage`, RISK_MAX_LEVERAGE_CAP) and the exchange bracket.
+  4b. Liquidation          - the stop must trigger safely before the estimated (isolated) liquidation price.
   5. Max risk per trade    - qty * |entry - stop| <= equity * `max_risk_per_trade_pct` / 100.
   6. Margin                - notional / leverage + margin already used by open positions <= equity.
 Reduce-only orders (closing/de-risking) are always allowed, so positions can be closed
@@ -33,6 +34,10 @@ class OrderRequest:
     stop_loss: Decimal | None
     leverage: int
     reduce_only: bool = False
+    # Maintenance margin of the exchange bracket for this notional (None = liquidation check skipped).
+    maint_margin_rate: Decimal | None = None
+    maint_amount: Decimal = Decimal("0")  # Binance "cum" of the bracket
+    bracket_max_leverage: int | None = None  # highest leverage the exchange allows for this notional
 
 
 @dataclass(frozen=True)
@@ -58,8 +63,37 @@ class RiskDecision:
         yield self.reason
 
 
+def estimate_liquidation_price(
+    side: Side,
+    entry: Decimal,
+    leverage: int,
+    maint_margin_rate: Decimal,
+    maint_amount: Decimal = Decimal("0"),
+    quantity: Decimal | None = None,
+) -> Decimal:
+    """Isolated-margin liquidation price of a fresh one-way position (Binance formula, no extra margin).
+
+    Long:  LP = entry * (1 - 1/L) / (1 - mmr) - cum / (qty * (1 - mmr))
+    Short: LP = entry * (1 + 1/L) / (1 + mmr) + cum / (qty * (1 + mmr))
+    Cross margin liquidates further away (the whole wallet backs the position), so this is conservative.
+    """
+    lev = Decimal(max(int(leverage), 1))
+    cum_term = maint_amount / quantity if quantity and quantity > 0 else Decimal("0")
+    if side == Side.BUY:
+        return max((entry * (1 - 1 / lev) - cum_term) / (1 - maint_margin_rate), Decimal("0"))
+    return (entry * (1 + 1 / lev) + cum_term) / (1 + maint_margin_rate)
+
+
 class RiskManager:
     OK = "ok"
+
+    def __init__(self, leverage_cap: int | None = None, liq_distance_ratio: Decimal | None = None) -> None:
+        from app.core.config import settings
+
+        self.leverage_cap = int(leverage_cap if leverage_cap is not None else settings.RISK_MAX_LEVERAGE_CAP)
+        self.liq_distance_ratio = Decimal(
+            str(liq_distance_ratio if liq_distance_ratio is not None else settings.RISK_STOP_MAX_LIQ_DISTANCE_RATIO)
+        )
 
     @staticmethod
     def _pct(part: Decimal, whole: Decimal) -> Decimal:
@@ -109,8 +143,28 @@ class RiskManager:
         if order.side == Side.SELL and order.stop_loss <= order.entry_price:
             return RiskDecision(False, "stop_loss_invalid: short stop must be above entry price")
 
-        if order.leverage < 1 or order.leverage > account.max_leverage:
-            return RiskDecision(False, f"leverage_limit: {order.leverage}x outside 1..{account.max_leverage}x")
+        max_lev = min(account.max_leverage, self.leverage_cap)
+        if order.leverage < 1 or order.leverage > max_lev:
+            return RiskDecision(False, f"leverage_limit: {order.leverage}x outside 1..{max_lev}x")
+        if order.bracket_max_leverage is not None and order.leverage > order.bracket_max_leverage:
+            return RiskDecision(
+                False, f"leverage_bracket: {order.leverage}x above the exchange limit {order.bracket_max_leverage}x"
+                " for this notional",
+            )  # fmt: skip
+
+        if order.maint_margin_rate is not None:
+            liq = estimate_liquidation_price(
+                order.side, order.entry_price, order.leverage, order.maint_margin_rate, order.maint_amount,
+                order.quantity,
+            )  # fmt: skip
+            liq_distance = abs(order.entry_price - liq)
+            stop_distance = abs(order.entry_price - order.stop_loss)
+            if liq_distance <= 0 or stop_distance > liq_distance * self.liq_distance_ratio:
+                return RiskDecision(
+                    False,
+                    f"stop_beyond_liquidation: stop {order.stop_loss} too close to/after the estimated liquidation"
+                    f" price {liq:.8f} ({order.leverage}x); lower the leverage or tighten the stop",
+                )
 
         risk = self.trade_risk(order)
         max_risk = account.equity * account.max_risk_per_trade_pct / Decimal(100)
@@ -135,7 +189,7 @@ class RiskManager:
             peak_equity=max(Decimal(account.peak_equity or equity), equity),
             day_start_equity=Decimal(account.day_start_equity or equity),
             max_risk_per_trade_pct=Decimal(account.max_risk_per_trade_pct),
-            max_leverage=int(account.max_leverage),
+            max_leverage=int(account.max_leverage),  # clamped to RISK_MAX_LEVERAGE_CAP in evaluate()
             max_daily_loss_pct=Decimal(account.max_daily_loss_pct),
             max_drawdown_pct=Decimal(account.max_drawdown_pct),
         )
