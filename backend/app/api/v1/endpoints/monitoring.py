@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.alert import AlertRecord
 from app.schemas.alert import MonitoringStatus
+from app.services.alerts.service import channels_status
 from app.services.alerts.whatsapp import channel_status
 from app.services.health import readiness
 
@@ -31,6 +32,7 @@ async def monitoring_status(
     return MonitoringStatus(
         readiness=await readiness(),
         channel=channel_status(),  # type: ignore[arg-type]
+        channels=channels_status(),  # type: ignore[arg-type]
         alerts_24h=total,
         alerts_failed_24h=failed,
         alerts_enabled=settings.ALERTS_ENABLED,

@@ -117,7 +117,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | F-03 | Limites de risco agregados por workspace | P0 | Faltando | M | ver G-02 |
 | F-04 | PnL por período (`/history/pnl`, gráfico 30 dias) | P2 | Faltando | M | `history.py` não tem a rota; `AGENT_GUIDE` Etapa 6 |
 | F-05 | Posições consolidadas | P2 | Parcial — `GET /history/positions` sem `account_id` já agrega o workspace, mas sem rótulo da conta e sem tabela na UI | P | `history.py:list_positions` |
-| F-06 | Alertas no Telegram / e-mail | P2 | Faltando (interface `Notifier` pronta) | M | `services/alerts/notifier.py` |
+| F-06 | Alertas no Telegram / e-mail | P2 | ✅ Resolvido — canais `telegram` (Bot API) e `email` (SMTP STARTTLS/SSL) no mesmo pipeline, destinatários por workspace (`telegram_chat_ids`, `emails`, migração `0011`) com padrão do servidor; `docs/ALERTS.md` | M | `services/alerts/telegram.py`, `services/alerts/email.py` |
 | F-07 | TOTP 2FA | P0 | Faltando | M | ver G-22 |
 | F-08 | Funding no backtest | P2 | Faltando (resultados superestimam perpétuos) | M | `STRATEGIES.md` linhas 5/151/168 |
 | F-09 | Walk-forward / out-of-sample | P2 | Faltando | M | `ROADMAP` Fase 1 |

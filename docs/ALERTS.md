@@ -1,9 +1,10 @@
-# Alertas via WhatsApp
+# Alertas via WhatsApp, Telegram e e-mail
 
 A plataforma envia alertas operacionais (kill switch, limites de risco, ordens rejeitadas, erros de bots,
-WebSocket desconectado, divergências do reconciliador, falhas de tarefas e resumo diário de PnL) para números
-de WhatsApp. Todo alerta é gravado no histórico (tabela `alerts`, tela **Monitoramento**) mesmo quando o
-WhatsApp não está configurado.
+WebSocket desconectado, divergências do reconciliador, falhas de tarefas e resumo diário de PnL) por
+**WhatsApp**, **Telegram** (bot) e **e-mail** (SMTP). Os canais são independentes: cada alerta vai para todos os
+canais configurados. Todo alerta é gravado no histórico (tabela `alerts`, tela **Monitoramento**) mesmo quando
+nenhum canal está configurado (status `disabled`, canal `none`).
 
 > **Nunca coloque tokens reais no repositório.** As credenciais ficam somente no `.env` do servidor
 > (que é ignorado pelo git). Mensagens e logs passam por mascaramento de segredos e os números aparecem
@@ -16,15 +17,17 @@ evento (auditoria / WebSocket / Celery / beat)
    └─▶ alerta enfileirado (só após o COMMIT da transação; descartado em rollback)
          └─▶ Celery "alerts.process": configurações do workspace, evento ligado?, severidade mínima,
                antispam (Redis SET NX EX) ─▶ grava em `alerts`
-               └─▶ Celery "alerts.deliver": envia a cada destinatário pelo provedor configurado
+               └─▶ Celery "alerts.deliver": envia a cada destinatário de cada canal configurado
                      (até 5 novas tentativas com backoff exponencial; números já atendidos não recebem de novo)
 ```
 
 - O envio é **assíncrono**: o trading nunca espera nem falha por causa de um alerta. Se o broker estiver fora
   do ar o alerta é descartado (contador `btp_alerts_total{status="dispatch_failed"}`).
-- **Destinatários**: os números do workspace (tela Monitoramento). Se o workspace não tiver números, usa
-  `WHATSAPP_TO`. Alertas globais (kill switch global, falha de tarefa, WebSocket de mercado) vão para
-  `WHATSAPP_TO` **e** para os workspaces que mantêm o evento ligado.
+- **Destinatários** (por canal): a lista do workspace (`recipients` = WhatsApp, `telegram_chat_ids`, `emails`).
+  Se o workspace não tiver destinatários naquele canal, usa o padrão do servidor (`WHATSAPP_TO`,
+  `TELEGRAM_CHAT_IDS`, `EMAIL_TO`). Alertas globais (kill switch global, falha de tarefa, WebSocket de mercado)
+  vão para os padrões do servidor **e** para os workspaces que mantêm o evento ligado.
+- **Novas tentativas** valem por destinatário: quem já recebeu (WhatsApp, Telegram ou e-mail) não recebe de novo.
 - **Antispam**: um alerta por evento/conta/motivo a cada `ALERT_THROTTLE_MINUTES` (padrão 15; configurável por
   workspace). Kill switch global, ordens executadas, posições e resumo diário não são agrupados.
 
@@ -79,8 +82,72 @@ Exemplo de mensagem:
 | `WHATSAPP_HTTP_METHOD`, `WHATSAPP_EXTRA_HEADERS`, `WHATSAPP_BODY_TEMPLATE` | `generic_http`. |
 | `WHATSAPP_TO` | Destinatários padrão em E.164, separados por vírgula (`+5511999999999,+5521988887777`). |
 | `WHATSAPP_TIMEOUT_SECONDS` | Timeout HTTP por mensagem (padrão 10). |
+| `TELEGRAM_ENABLED` | `true` para enviar pelo Telegram (padrão `false`). |
+| `TELEGRAM_BOT_TOKEN` | Token do bot criado no @BotFather (**segredo**, formato `123456789:AA...`). |
+| `TELEGRAM_CHAT_IDS` | Chats padrão, separados por vírgula: id de usuário/grupo (`123456789`, `-1001234567890`) ou `@canal`. |
+| `TELEGRAM_API_URL` | Padrão `https://api.telegram.org` (troque só para um Bot API server próprio). |
+| `TELEGRAM_TIMEOUT_SECONDS` | Timeout HTTP (padrão 10). |
+| `EMAIL_ENABLED` | `true` para enviar por e-mail (padrão `false`). |
+| `SMTP_HOST` / `SMTP_PORT` | Servidor SMTP (ex.: `smtp.gmail.com` / `587`). |
+| `SMTP_SECURITY` | `starttls` (padrão, porta 587) \| `ssl` (TLS implícito, 465) \| `none` (só relay em rede confiável). O certificado é sempre verificado. |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | Login SMTP (**segredo**; vazio = sem autenticação). |
+| `EMAIL_FROM` | Remetente (obrigatório), ex.: `ISCTRADE <alertas@seudominio.com.br>`. |
+| `EMAIL_TO` | Destinatários padrão, separados por vírgula. |
+| `SMTP_TIMEOUT_SECONDS` | Timeout por envio (padrão 15). |
 
 Depois de alterar o `.env`: `docker compose up -d backend celery_worker celery_beat streams`.
+
+## Telegram (`TELEGRAM_*`)
+
+Usa a Bot API oficial: `POST https://api.telegram.org/bot<TOKEN>/sendMessage` com
+`{"chat_id", "text", "parse_mode": "HTML"}` (o negrito `*...*` das mensagens vira `<b>...</b>`; o resto é escapado).
+
+1. No Telegram, fale com **@BotFather** → `/newbot` → copie o token.
+2. Descubra o chat id:
+   - **conversa privada**: mande `/start` para o seu bot (ele só pode falar com quem iniciou a conversa) e rode
+     `curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates"` — o id está em `message.chat.id`;
+   - **grupo**: adicione o bot ao grupo, mande uma mensagem e use o mesmo `getUpdates` (ids de grupo são negativos,
+     supergrupos começam com `-100`);
+   - **canal**: adicione o bot como administrador e use `@nome_do_canal` (ou o id `-100...`).
+3. Teste fora da plataforma:
+
+   ```bash
+   curl -sS -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+     -H "Content-Type: application/json" -d '{"chat_id": "123456789", "text": "Teste ISCTRADE ✅"}'
+   ```
+
+4. `.env`:
+
+   ```dotenv
+   TELEGRAM_ENABLED=true
+   TELEGRAM_BOT_TOKEN=<token do BotFather>
+   TELEGRAM_CHAT_IDS=123456789,-1001234567890
+   ```
+
+Erros: `403` (bot bloqueado/removido do grupo) e `400` (chat inexistente) não são repetidos; `429` e `5xx` são.
+O token faz parte da URL e nunca aparece em logs nem no campo `error` do histórico.
+
+## E-mail (`SMTP_*` / `EMAIL_*`)
+
+Envio por SMTP com a biblioteca padrão do Python (sem dependências novas), em uma *thread* para não travar o worker.
+Assunto = primeira linha do alerta (ex.: `🚨 ISCTRADE · Kill switch da conta acionado`); corpo em texto puro;
+cabeçalho `Auto-Submitted: auto-generated`.
+
+```dotenv
+EMAIL_ENABLED=true
+SMTP_HOST=smtp.seuprovedor.com
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_USERNAME=alertas@seudominio.com.br
+SMTP_PASSWORD=<senha de app / API key SMTP>
+EMAIL_FROM=ISCTRADE <alertas@seudominio.com.br>
+EMAIL_TO=voce@exemplo.com
+```
+
+- Gmail/Google Workspace exigem **senha de app** (com 2FA ligado); Amazon SES, Mailgun, SendGrid, Brevo etc. fornecem
+  credenciais SMTP próprias. Configure SPF/DKIM do domínio do remetente para os alertas não caírem no spam.
+- Falha de autenticação (535) e destinatário recusado (5xx) não são repetidos; erros temporários (4xx, conexão)
+  são.
 
 ## Opção 1 — WAGO hospedado (padrão, `WHATSAPP_PROVIDER=wago`)
 
@@ -207,6 +274,8 @@ WHATSAPP_BODY_TEMPLATE={"number": "{to_digits}", "message": "{text}"}
 ## Testando pela plataforma
 
 1. Na tela **Monitoramento** (admin do workspace), informe os números em E.164, escolha os eventos e salve.
+   Chats do Telegram e e-mails do workspace são definidos pela API (`telegram_chat_ids`, `emails`, até 10 cada) ou
+   ficam nos padrões do servidor.
 2. Clique em **Enviar alerta de teste** — o envio é síncrono e o resultado aparece na hora e no histórico.
 
 Pela API (com o token de acesso do login):
@@ -214,7 +283,8 @@ Pela API (com o token de acesso do login):
 ```bash
 curl -sS -X PUT https://SEU_DOMINIO/api/v1/alerts/settings \
   -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
-  -d '{"recipients": ["+5511999999999"], "events": {"order_filled": true}, "min_severity": "info"}'
+  -d '{"recipients": ["+5511999999999"], "telegram_chat_ids": ["123456789"], "emails": ["voce@exemplo.com"],
+       "events": {"order_filled": true}, "min_severity": "info"}'
 
 curl -sS -X POST https://SEU_DOMINIO/api/v1/alerts/test -H "Authorization: Bearer $ACCESS_TOKEN"
 curl -sS "https://SEU_DOMINIO/api/v1/alerts/?limit=20" -H "Authorization: Bearer $ACCESS_TOKEN"
@@ -222,11 +292,14 @@ curl -sS https://SEU_DOMINIO/api/v1/monitoring/status -H "Authorization: Bearer 
 ```
 
 Status de entrega: `sent` (todos receberam), `partial`, `failed` (erro em `error`), `pending` (tentando de novo)
-e `disabled` (WhatsApp desligado ou sem credenciais — o alerta fica só no histórico).
+e `disabled` (nenhum canal ligado/configurado — o alerta fica só no histórico). O campo `channel` lista os canais
+usados (`whatsapp,telegram,email`) e `recipients` os destinatários mascarados (`+5511*****1234`, `tg:123***89`,
+`v***@exemplo.com`). `GET /alerts/settings` e `/monitoring/status` trazem `channels` com o estado de cada canal.
 
 ## Solução de problemas
 
-- **`disabled`**: confira `WHATSAPP_ENABLED=true`, `WHATSAPP_PROVIDER` e as variáveis obrigatórias do provedor.
+- **`disabled`**: confira `WHATSAPP_ENABLED`/`TELEGRAM_ENABLED`/`EMAIL_ENABLED=true` e as variáveis obrigatórias de
+  cada canal (WhatsApp: provedor + token; Telegram: `TELEGRAM_BOT_TOKEN`; e-mail: `SMTP_HOST` + `EMAIL_FROM`).
 - **`failed` com HTTP 401/403**: token inválido (não há nova tentativa para erros 4xx, exceto 408/429).
 - **Nada chega e não há registro**: verifique o `celery_worker` (`docker compose logs celery_worker`) e se o
   evento está ligado no workspace / acima da severidade mínima; repetições dentro da janela antispam são

@@ -34,14 +34,17 @@ from app.models.alert import AlertRecord, AlertSettings
 from app.models.trading import Trade
 from app.models.workspace import Workspace
 from app.services.alerts import throttle
+from app.services.alerts.email import build_email, mask_email, normalize_email
 from app.services.alerts.events import EVENTS, AlertEvent, effective_toggles, severity_allows
 from app.services.alerts.formatting import render
 from app.services.alerts.notifier import Notifier, NotifierError
+from app.services.alerts.telegram import build_telegram, mask_chat_id, normalize_chat_id
 from app.services.alerts.whatsapp import build_notifier, normalize_phone
 
 logger = logging.getLogger(__name__)
 
 PENDING_KEY = "pending_alerts"
+NO_CHANNEL = "nenhum canal configurado (WhatsApp, Telegram ou e-mail: *_ENABLED/credenciais)"
 SessionFactory = async_sessionmaker[AsyncSession]
 
 
@@ -252,29 +255,88 @@ async def get_settings_row(db: AsyncSession, workspace_id: uuid.UUID) -> AlertSe
     ).scalar_one_or_none()
 
 
-def _clean_recipients(numbers: list[str]) -> list[str]:
+def _clean(values: list[str], normalize: Callable[[str], str] = normalize_phone) -> list[str]:
     out: list[str] = []
-    for n in numbers:
+    for n in values:
         try:
-            phone = normalize_phone(n)
+            value = normalize(n)
         except ValueError:
             continue
-        if phone not in out:
-            out.append(phone)
+        if value not in out:
+            out.append(value)
+    return out
+
+
+def _clean_recipients(numbers: list[str]) -> list[str]:
+    return _clean(numbers, normalize_phone)
+
+
+# channel -> (normalizer, AlertSettings attribute, server default setting, masker)
+CHANNELS: dict[str, tuple[Callable[[str], str], str, str, Callable[[str], str]]] = {
+    "whatsapp": (normalize_phone, "recipients", "WHATSAPP_TO", mask_phone),
+    "telegram": (normalize_chat_id, "telegram_chat_ids", "TELEGRAM_CHAT_IDS", mask_chat_id),
+    "email": (normalize_email, "emails", "EMAIL_TO", mask_email),
+}
+
+
+def build_channels(whatsapp: Notifier | None = None) -> dict[str, Notifier]:
+    """Configured delivery channels (WhatsApp, Telegram, e-mail), keyed by channel name."""
+    out: dict[str, Notifier] = {}
+    for notifier in (whatsapp or build_notifier(), build_telegram(), build_email()):
+        if notifier.configured:
+            out[notifier.channel] = notifier
+    return out
+
+
+def channels_status() -> list[dict[str, Any]]:
+    """Status of every channel (no secrets)."""
+    from app.services.alerts.email import email_status
+    from app.services.alerts.telegram import telegram_status
+    from app.services.alerts.whatsapp import channel_status
+
+    return [channel_status(), telegram_status(), email_status()]
+
+
+def mask_target(channel: str, address: str) -> str:
+    spec = CHANNELS.get(channel)
+    return spec[3](address) if spec else "***"
+
+
+async def resolve_targets(
+    db: AsyncSession, workspace_id: uuid.UUID | None, event: str, channels: list[str] | None = None
+) -> dict[str, list[str]]:
+    """Recipients per channel.
+
+    Workspace alerts: the workspace's own list for each channel, falling back to the server default
+    (WHATSAPP_TO / TELEGRAM_CHAT_IDS / EMAIL_TO). Global alerts: server defaults + every enabled workspace that
+    keeps the event switched on.
+    """
+    wanted = channels or list(CHANNELS)
+    out: dict[str, list[str]] = {}
+    if workspace_id is not None:
+        row = await get_settings_row(db, workspace_id)
+        for ch in wanted:
+            normalize, attr, default, _ = CHANNELS[ch]
+            own = list(getattr(row, attr, None) or []) if row else []
+            out[ch] = _clean(own or list(getattr(settings, default)), normalize)
+        return out
+    rows = [
+        r
+        for r in (await db.execute(select(AlertSettings).where(AlertSettings.enabled.is_(True)))).scalars()
+        if effective_toggles(r.events).get(event, False)
+    ]
+    for ch in wanted:
+        normalize, attr, default, _ = CHANNELS[ch]
+        values = list(getattr(settings, default))
+        for r in rows:
+            values.extend(getattr(r, attr, None) or [])
+        out[ch] = _clean(values, normalize)
     return out
 
 
 async def resolve_recipients(db: AsyncSession, workspace_id: uuid.UUID | None, event: str) -> list[str]:
-    """Workspace recipients (fallback WHATSAPP_TO). Global events: WHATSAPP_TO + opted-in workspaces."""
-    if workspace_id is not None:
-        row = await get_settings_row(db, workspace_id)
-        numbers = list(row.recipients) if row and row.recipients else list(settings.WHATSAPP_TO)
-        return _clean_recipients(numbers)
-    numbers = list(settings.WHATSAPP_TO)
-    for row in (await db.execute(select(AlertSettings).where(AlertSettings.enabled.is_(True)))).scalars():
-        if effective_toggles(row.events).get(event, False):
-            numbers.extend(row.recipients or [])
-    return _clean_recipients(numbers)
+    """WhatsApp recipients (see resolve_targets)."""
+    return (await resolve_targets(db, workspace_id, event, ["whatsapp"]))["whatsapp"]
 
 
 async def _labels(db: AsyncSession, workspace_id: str | None, account_id: str | None) -> dict[str, Any]:
@@ -334,10 +396,11 @@ async def process_alert(sessions: SessionFactory, payload: dict[str, Any], *, fo
             status="pending",
             data=data,
         )
-        notifier = build_notifier()
-        if not notifier.configured:
+        channels = build_channels()
+        record.channel = ",".join(channels) if channels else "none"
+        if not channels:
             record.status = "disabled"
-            record.error = "WhatsApp não configurado (WHATSAPP_ENABLED/credenciais)"
+            record.error = NO_CHANNEL
         db.add(record)
         await db.commit()
         if ws_id:  # workspace alerts only: system-level alerts (tasks, streams) are not broadcast to every user
@@ -360,23 +423,26 @@ async def deliver_alert(
     notifier: Notifier | None = None,
     final: bool = True,
 ) -> dict[str, Any]:
-    """Send a pending alert to every recipient. Raises DeliveryError (retry) unless `final`."""
-    notifier = notifier or build_notifier()
+    """Send a pending alert to every recipient of every configured channel. Raises DeliveryError (retry) unless
+    `final`. `notifier` overrides the WhatsApp channel (tests)."""
+    channels = build_channels(notifier)
     async with sessions() as db:
         record = await db.get(AlertRecord, uuid.UUID(str(alert_id)))
         if record is None:
             return {"status": "missing"}
         if record.status in ("sent", "disabled"):
             return {"status": record.status}
-        if not notifier.configured:
+        if not channels:
             record.status = "disabled"
-            record.error = "WhatsApp não configurado (WHATSAPP_ENABLED/credenciais)"
+            record.error = NO_CHANNEL
             await db.commit()
             return {"status": record.status}
-        recipients = await resolve_recipients(db, record.workspace_id, record.event)
-        record.recipients = [mask_phone(r) for r in recipients]
+        targets = await resolve_targets(db, record.workspace_id, record.event, list(channels))
+        plan = [(ch, addr, mask_target(ch, addr)) for ch in channels for addr in targets.get(ch, [])]
+        record.channel = ",".join(channels)
+        record.recipients = [masked for _, _, masked in plan]
         record.attempts += 1
-        if not recipients:
+        if not plan:
             record.status = "failed"
             record.error = "nenhum destinatário configurado"
             await db.commit()
@@ -386,12 +452,11 @@ async def deliver_alert(
         errors: list[str] = []
         retryable = False
         delivered = list(already)
-        for phone in recipients:
-            masked = mask_phone(phone)
+        for ch, addr, masked in plan:
             if masked in already:
                 continue
             try:
-                await notifier.send(phone, record.message)
+                await channels[ch].send(addr, record.message)
                 delivered.append(masked)
             except NotifierError as exc:
                 errors.append(f"{masked}: {exc}")

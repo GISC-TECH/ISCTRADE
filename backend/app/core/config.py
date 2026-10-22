@@ -197,6 +197,23 @@ class Settings(BaseSettings):
     WHATSAPP_TO: Annotated[list[str], NoDecode] = []  # default recipients (E.164, comma-separated)
     WHATSAPP_TIMEOUT_SECONDS: float = 10.0
 
+    # Telegram alerts (Bot API). Recipients: chat ids (numbers, -100... for groups/channels) or @channel.
+    TELEGRAM_ENABLED: bool = False
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_IDS: Annotated[list[str], NoDecode] = []  # default recipients
+    TELEGRAM_API_URL: str = "https://api.telegram.org"
+    TELEGRAM_TIMEOUT_SECONDS: float = 10.0
+    # E-mail alerts (SMTP). SMTP_SECURITY: starttls (587) | ssl (465) | none (relay on a trusted network only).
+    EMAIL_ENABLED: bool = False
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_SECURITY: str = "starttls"
+    SMTP_TIMEOUT_SECONDS: float = 15.0
+    EMAIL_FROM: str = ""
+    EMAIL_TO: Annotated[list[str], NoDecode] = []  # default recipients
+
     # Tamper-evident audit trail (app/services/audit_chain.py). Empty key = derived from MASTER_ENCRYPTION_KEY.
     AUDIT_CHAIN_KEY: str = ""
     AUDIT_SEAL_SECONDS: int = 30
@@ -220,6 +237,8 @@ class Settings(BaseSettings):
         "CORS_ORIGINS",
         "TRUSTED_PROXIES",
         "WHATSAPP_TO",
+        "TELEGRAM_CHAT_IDS",
+        "EMAIL_TO",
         "NEWS_RSS_FEEDS",
         "X_ACCOUNTS",
         "X_QUERIES",

@@ -23,6 +23,9 @@ class AlertSettings(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # WhatsApp recipients in E.164 (e.g. +5511999999999). Empty = WHATSAPP_TO from the server config.
     recipients: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    # Telegram chat ids / e-mail addresses. Empty = TELEGRAM_CHAT_IDS / EMAIL_TO from the server config.
+    telegram_chat_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    emails: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     # event key -> enabled; keys not present use the default of each event.
     events: Mapped[dict[str, bool]] = mapped_column(JSON, default=dict, nullable=False)
     min_severity: Mapped[str] = mapped_column(String(10), default="info", nullable=False)

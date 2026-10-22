@@ -20,7 +20,9 @@ from app.models.alert import AlertRecord, AlertSettings
 from app.schemas.alert import AlertEventInfo, AlertRead, AlertSettingsRead, AlertSettingsUpdate, AlertTestRequest
 from app.schemas.common import Page
 from app.services.alerts import service
+from app.services.alerts.email import mask_email
 from app.services.alerts.events import CONFIGURABLE_EVENTS, EVENTS, AlertEvent, effective_toggles
+from app.services.alerts.telegram import mask_chat_id
 from app.services.alerts.whatsapp import channel_status
 from app.services.audit import log_event
 
@@ -39,11 +41,17 @@ def session_factory_from(db: AsyncSession):
 
 def _settings_read(row: AlertSettings | None, ctx: WorkspaceContext) -> AlertSettingsRead:
     recipients = list(row.recipients) if row and row.recipients else []
-    if not has_role(ctx.role, Role.ADMIN):  # viewers/traders see masked numbers only
+    chats = list(row.telegram_chat_ids) if row and row.telegram_chat_ids else []
+    emails = list(row.emails) if row and row.emails else []
+    if not has_role(ctx.role, Role.ADMIN):  # viewers/traders see masked recipients only
         recipients = [mask_phone(r) for r in recipients]
+        chats = [mask_chat_id(c) for c in chats]
+        emails = [mask_email(e) for e in emails]
     return AlertSettingsRead(
         enabled=row.enabled if row else True,
         recipients=recipients,
+        telegram_chat_ids=chats,
+        emails=emails,
         events=effective_toggles(row.events if row else None),
         min_severity=row.min_severity if row else "info",  # type: ignore[arg-type]
         throttle_minutes=row.throttle_minutes
@@ -60,6 +68,7 @@ def _settings_read(row: AlertSettings | None, ctx: WorkspaceContext) -> AlertSet
             for k in CONFIGURABLE_EVENTS
         ],
         channel=channel_status(),  # type: ignore[arg-type]
+        channels=service.channels_status(),  # type: ignore[arg-type]
     )
 
 
@@ -78,22 +87,38 @@ async def update_alert_settings(
 ) -> AlertSettingsRead:
     row = await service.get_settings_row(db, ctx.workspace.id)
     if row is None:
-        row = AlertSettings(workspace_id=ctx.workspace.id, enabled=True, recipients=[], events={}, min_severity="info")
+        row = AlertSettings(
+            workspace_id=ctx.workspace.id,
+            enabled=True,
+            recipients=[],
+            telegram_chat_ids=[],
+            emails=[],
+            events={},
+            min_severity="info",
+        )
         db.add(row)
     changes = data.model_dump(exclude_unset=True)
     if "enabled" in changes and data.enabled is not None:
         row.enabled = data.enabled
     if "recipients" in changes and data.recipients is not None:
         row.recipients = data.recipients
+    if "telegram_chat_ids" in changes and data.telegram_chat_ids is not None:
+        row.telegram_chat_ids = data.telegram_chat_ids
+    if "emails" in changes and data.emails is not None:
+        row.emails = data.emails
     if "events" in changes and data.events is not None:
         row.events = {**(row.events or {}), **data.events}
     if "min_severity" in changes and data.min_severity is not None:
         row.min_severity = data.min_severity
     if "throttle_minutes" in changes:
         row.throttle_minutes = data.throttle_minutes
-    audit = {k: v for k, v in changes.items() if k != "recipients"}
+    audit = {k: v for k, v in changes.items() if k not in ("recipients", "telegram_chat_ids", "emails")}
     if "recipients" in changes:
         audit["recipients"] = [mask_phone(r) for r in data.recipients or []]
+    if "telegram_chat_ids" in changes:
+        audit["telegram_chat_ids"] = [mask_chat_id(c) for c in data.telegram_chat_ids or []]
+    if "emails" in changes:
+        audit["emails"] = [mask_email(e) for e in data.emails or []]
     await log_event(db, "alerts.settings_updated", user_id=ctx.user.id, workspace_id=ctx.workspace.id, **audit)
     await db.commit()
     await db.refresh(row)
@@ -112,7 +137,7 @@ async def send_test_alert(
 ) -> AlertRecord:
     """Envia (de forma síncrona) um alerta de teste para os destinatários do workspace."""
     text = (data.message if data and data.message else None) or (
-        "Se você recebeu esta mensagem, os alertas via WhatsApp estão funcionando."
+        "Se você recebeu esta mensagem, os alertas do ISCTRADE estão funcionando neste canal."
     )
     payload = service.build_payload(AlertEvent.TEST, workspace_id=ctx.workspace.id, text=text, actor=ctx.user.email)
     sessions = session_factory_from(db)

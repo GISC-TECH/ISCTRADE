@@ -102,7 +102,7 @@ Toda linha de `audit_logs` é **selada** em uma cadeia de hashes (`app/services/
 - Sem 2FA no login.
 - A trilha de auditoria fica no mesmo banco, mas é encadeada com HMAC e verificável (veja acima); não é WORM.
 - Sem rotação automática da `MASTER_ENCRYPTION_KEY`.
-- Alertas automáticos apenas via WhatsApp (veja [ALERTS.md](ALERTS.md)); Telegram/e-mail ainda não. Os tokens do provedor ficam só no `.env`; o worker Celery e o `streams` expõem métricas sem autenticação nas portas internas 9101/9102 (não publique essas portas).
+- Alertas via WhatsApp, Telegram e e-mail (veja [ALERTS.md](ALERTS.md)). Tokens e senha SMTP ficam só no `.env`; o worker Celery e o `streams` expõem métricas sem autenticação nas portas internas 9101/9102 (não publique essas portas).
 
 ## Reporte de vulnerabilidades
 Envie relatos de forma privada aos mantenedores (não abra issues públicas com detalhes exploráveis). Inclua passos de reprodução e impacto; responderemos o mais rápido possível.

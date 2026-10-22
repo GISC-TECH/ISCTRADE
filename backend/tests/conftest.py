@@ -22,9 +22,11 @@ os.environ["REDIS_URL"] = "redis://127.0.0.1:1/0"  # unreachable on purpose -> i
 os.environ["LIVE_TRADING_ENABLED"] = "false"
 os.environ["CELERY_DISPATCH_ENABLED"] = "false"
 # Alerts: never inherit a real WhatsApp configuration from the developer's shell.
-for _var in [k for k in os.environ if k.startswith("WHATSAPP_")]:
+for _var in [k for k in os.environ if k.startswith(("WHATSAPP_", "TELEGRAM_", "SMTP_", "EMAIL_"))]:
     del os.environ[_var]
 os.environ["WHATSAPP_ENABLED"] = "false"
+os.environ["TELEGRAM_ENABLED"] = "false"
+os.environ["EMAIL_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
