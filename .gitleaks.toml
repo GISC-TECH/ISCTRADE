@@ -1,0 +1,23 @@
+# Configuração do gitleaks (CI: docs/ci/ci.yml, job "secrets"). Usa as regras padrão + allowlist dos falsos
+# positivos conhecidos. Não acrescente segredos reais aqui: se o gitleaks achar um segredo verdadeiro, revogue-o
+# (docs/RUNBOOK.md §4.12) e remova-o do histórico — não o coloque na allowlist.
+title = "ISCTRADE gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Falsos positivos conhecidos (valores de teste e identificadores de presets)"
+regexTarget = "secret"
+regexes = [
+  # chaves/segredos fictícios usados nos testes da API (backend/tests/*)
+  '''^placeholder-(key|secret)-\d{4}$''',
+  # vetor de teste do RFC 6238 (apêndice B): base32("12345678901234567890") em backend/tests/test_mfa.py
+  '''^GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ$''',
+  # identificadores snake_case de presets de estratégia (key="trend_conservative_btc_4h" em app/strategy/presets.py)
+  '''^[a-z][a-z0-9]*(_[a-z0-9]+)+$''',
+]
+paths = [
+  # lockfiles (hashes de integridade de pacotes)
+  '''(^|/)package-lock\.json$''',
+]

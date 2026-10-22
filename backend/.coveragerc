@@ -1,0 +1,19 @@
+# Cobertura do backend (CI: pytest --cov). Medido em 2026-10-22: 85,8% (linhas + ramos). O limiar fica um pouco
+# abaixo para tolerar variação; suba-o quando a cobertura crescer — nunca o reduza para "passar" código sem testes.
+[run]
+source = app
+branch = true
+# SQLAlchemy async roda o código do ORM em greenlets: sem isso a cobertura dos endpoints é subestimada (GAPS B-02).
+concurrency = greenlet, thread
+omit =
+    app/*/__main__.py
+
+[report]
+fail_under = 84
+skip_covered = true
+show_missing = true
+precision = 1
+exclude_also =
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:
+    raise NotImplementedError

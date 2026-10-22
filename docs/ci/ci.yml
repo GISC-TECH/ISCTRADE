@@ -45,8 +45,8 @@ jobs:
         run: ruff check .
       - name: ruff format --check
         run: ruff format --check .
-      - name: pytest
-        run: pytest -q
+      - name: pytest + cobertura (limiar em backend/.coveragerc)
+        run: pytest -q --cov --cov-report=term --cov-report=xml
       - name: pip-audit (vulnerabilidades conhecidas nas dependências)
         run: |
           pip install pip-audit
@@ -162,7 +162,20 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
           docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile monitoring --profile backup config -q
       - name: shellcheck
-        run: shellcheck scripts/*.sh infra/backup/*.sh
+        run: shellcheck scripts/*.sh infra/backup/*.sh infra/redis/*.sh
+
+  secrets:
+    name: Segredos no histórico (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # varre o histórico inteiro, não só o último commit
+      - name: gitleaks (regras padrão + allowlist em .gitleaks.toml)
+        # Imagem oficial em vez da gitleaks-action (que exige licença paga para organizações).
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 \
+            git /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1
 
   monitoring:
     name: Regras de alerta (promtool + amtool)

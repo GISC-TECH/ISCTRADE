@@ -3,3 +3,4 @@ pytest==9.1.1
 pytest-asyncio==1.4.0
 aiosqlite==0.20.0
 ruff==0.8.4
+pytest-cov==7.1.0  # cobertura com limiar (CI: --cov-fail-under em .coveragerc)
