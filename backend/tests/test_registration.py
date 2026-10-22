@@ -19,7 +19,7 @@ def _prod(**kw) -> Settings:
     base = dict(
         ENVIRONMENT="production", JWT_SECRET=secrets.token_urlsafe(48),
         MASTER_ENCRYPTION_KEY=base64.b64encode(os.urandom(32)).decode(),
-        DATABASE_URL="postgresql+asyncpg://u:pw@h/db", COOKIE_SECURE=True, DEBUG=False,
+        DATABASE_URL="postgresql+asyncpg://u:pw@h/db", COOKIE_SECURE=True, DEBUG=False, REDIS_PASSWORD="pw",
     )  # fmt: skip
     return Settings(**{**base, **kw})
 
@@ -49,7 +49,8 @@ def test_startup_blocked_with_open_registration(monkeypatch) -> None:
     from app import main
 
     good = _prod(ALLOW_REGISTRATION=True)
-    for field in ("ENVIRONMENT", "JWT_SECRET", "MASTER_ENCRYPTION_KEY", "DATABASE_URL", "COOKIE_SECURE", "DEBUG"):
+    fields = ("ENVIRONMENT", "JWT_SECRET", "MASTER_ENCRYPTION_KEY", "DATABASE_URL", "COOKIE_SECURE", "DEBUG")
+    for field in (*fields, "REDIS_URL", "CELERY_BROKER_URL"):
         monkeypatch.setattr(main.settings, field, getattr(good, field))
     monkeypatch.setattr(main.settings, "ALLOW_REGISTRATION", True)
     monkeypatch.setattr(main.settings, "REGISTRATION_MODE", None)
