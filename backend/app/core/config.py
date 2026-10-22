@@ -244,6 +244,11 @@ class Settings(BaseSettings):
     RISK_GLOBAL_MAX_OPEN_POSITIONS: int = Field(0, ge=0)
     # Hard cap of capital per LIVE account: sizing and margin never use more equity than this (0 = no cap).
     RISK_LIVE_ACCOUNT_MAX_CAPITAL_USDT: float = Field(1000.0, ge=0)
+    # Deposits/withdrawals (income TRANSFER*) are folded into peak/day-start equity (live accounts), read at
+    # most every TRANSFER_SYNC_SECONDS and always before a new high / drawdown / daily-loss limit is acted on.
+    TRANSFER_SYNC_SECONDS: int = 300
+    TRANSFER_SETTLE_SECONDS: int = 5  # history read up to now - this (late-indexed rows land in the next read)
+    TRANSFER_ASSETS: Annotated[list[str], NoDecode] = ["USDT"]
 
     @field_validator(
         "CORS_ORIGINS",
@@ -255,6 +260,7 @@ class Settings(BaseSettings):
         "X_ACCOUNTS",
         "X_QUERIES",
         "ECON_CALENDAR_COUNTRIES",
+        "TRANSFER_ASSETS",
         mode="before",
     )
     @classmethod

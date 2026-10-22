@@ -14,7 +14,7 @@ from app.models import Account, AccountStatus, BotConfig, BotState, ExecutionMod
 from app.models.base import utcnow
 from app.schemas.bot_options import BotOptions
 from app.services.audit import log_event
-from app.services.equity import compute_equity, refresh_paper_marks, roll_risk_baselines
+from app.services.equity import compute_equity, refresh_paper_marks, refresh_risk_baselines
 from app.services.execution import (
     Executor,
     LiveExecutor,
@@ -268,7 +268,7 @@ class BotRunner:
         if account.execution_mode != ExecutionMode.LIVE:
             await refresh_paper_marks(self.db, account, {symbol: price})
         equity = (await compute_equity(self.db, account, self.client)).equity
-        roll_risk_baselines(account, equity)
+        await refresh_risk_baselines(account, equity, self.client, db=self.db)
         risk_state = self.rm.from_account(account, equity)
         if self.rm.is_kill_switch_triggered(risk_state):
             await trigger_account_kill_switch(self.db, account, f"drawdown {self.rm.drawdown_pct(risk_state):.2f}%")

@@ -34,7 +34,7 @@ from app.models import (
 from app.services import accounts as accounts_service
 from app.services import prices
 from app.services.audit import log_event
-from app.services.equity import compute_equity, open_positions, refresh_paper_marks, roll_risk_baselines
+from app.services.equity import compute_equity, open_positions, refresh_paper_marks, refresh_risk_baselines
 from app.services.execution import (
     ExecutionResult,
     LiveExecutor,
@@ -166,7 +166,7 @@ async def place_order(
         if not _is_live(account):
             await refresh_paper_marks(db, account, {symbol: market_price})
         equity = (await compute_equity(db, account, client)).equity
-        roll_risk_baselines(account, equity)
+        await refresh_risk_baselines(account, equity, client, db=db)
         rm = RiskManager()
         risk_state = rm.from_account(account, equity)
         if rm.is_kill_switch_triggered(risk_state):
