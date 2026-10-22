@@ -2,7 +2,7 @@
 
 import os
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -167,6 +167,22 @@ class Settings(BaseSettings):
     PAPER_ORDER_CHECK_SECONDS: int = 10  # paper resting limit orders + SL/TP checks (manual trading)
 
     RECONCILE_SECONDS: int = 60
+    # Stop guarantee (reconciler, every RECONCILE_SECONDS and on user-stream events): every live position must
+    # have a protective STOP at the exchange (algo orders included). A missing stop is re-created from the
+    # stored stop; positions without a known stop (opened outside the platform) get an emergency stop
+    # (PROTECTION_ADOPT_EXTERNAL=stop) or only a critical alert (=alert).
+    PROTECTION_GUARD_ENABLED: bool = True
+    PROTECTION_ADOPT_EXTERNAL: Literal["stop", "alert"] = "stop"
+    PROTECTION_EMERGENCY_STOP_MODE: Literal["atr", "percent"] = "atr"
+    PROTECTION_EMERGENCY_STOP_PCT: float = Field(3.0, gt=0, lt=100)  # percent mode and ATR fallback
+    PROTECTION_EMERGENCY_ATR_MULTIPLIER: float = Field(2.0, gt=0)
+    PROTECTION_EMERGENCY_ATR_INTERVAL: str = "1h"
+    PROTECTION_EMERGENCY_ATR_PERIOD: int = Field(14, ge=2)
+    # The stored stop was already crossed by the mark price (a stop there would trigger at once): close the
+    # position with a reduce-only MARKET order (true) or protect it with an emergency stop instead (false).
+    PROTECTION_CLOSE_IF_STOP_CROSSED: bool = True
+    PROTECTION_GRACE_SECONDS: int = 30  # skip symbols with a local order this recent (stop placement in flight)
+    PROTECTION_ORDER_HISTORY_DAYS: int = 7  # fallback: stop of the latest local order of the position's side
     EQUITY_SNAPSHOT_SECONDS: int = 300
 
     # Observability

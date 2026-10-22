@@ -246,16 +246,25 @@ async def test_reconciler_syncs_positions_orders_and_trades(db) -> None:
                 json=[{"id": 9, "orderId": 77, "side": "BUY", "price": "60000", "qty": "0.010", "commission": "0.24",
                        "commissionAsset": "USDT", "realizedPnl": "0", "time": 1700000000000}],
             )  # fmt: skip
+        if path == "/fapi/v1/openOrders":
+            return httpx.Response(200, json=[])
+        if path == "/fapi/v1/openAlgoOrders":  # the protective stop lives in the Algo service
+            return httpx.Response(200, json=[{
+                "algoId": 5, "clientAlgoId": "btp-sl", "symbol": "BTCUSDT", "side": "SELL", "orderType": "STOP_MARKET",
+                "triggerPrice": "58000", "closePosition": True, "algoStatus": "NEW", "quantity": "0",
+            }])  # fmt: skip
         return httpx.Response(404, json={"code": -1, "msg": path})
 
     async with mock_client(handler) as client:
         summary = await Reconciler(db, acc, client).run()
         again = await Reconciler(db, acc, client).run()
     await db.commit()
-    assert summary == {"positions_changed": 1, "orders_updated": 1, "trades_inserted": 1}
+    assert summary == {"positions_changed": 1, "orders_updated": 1, "trades_inserted": 1, "stops_ok": 1,
+                       "stops_restored": 0, "unprotected": 0, "closed_crossed": 0}  # fmt: skip
     assert again["trades_inserted"] == 0  # idempotent
     pos = await db.scalar(select(Position).where(Position.symbol == "BTCUSDT"))
     assert pos.quantity == D("0.01") and pos.leverage == 3 and not pos.is_paper
+    assert pos.stop_loss == D("58000")  # the exchange stop is remembered (re-created from it if it disappears)
     trade = await db.scalar(select(Trade))
     assert trade.order_id == order.id and trade.fee == D("0.24")
     assert order.status == OrderStatus.FILLED

@@ -79,6 +79,18 @@ async def tick_bot(
             if bot is None:
                 return {"bot_id": str(bot_id), "status": "missing"}
             account = await db.get(Account, bot.account_id)
+            if bot.state == BotState.STARTING and account.execution_mode == ExecutionMode.LIVE:
+                # restart recovery: the bots.start task may have been lost; leverage/margin must be set before
+                # the first live order (idempotent on the exchange)
+                try:
+                    await prepare_live_bot(db, bot, account)
+                except Exception as exc:
+                    bot.state = BotStateMachine(bot.state).fail()
+                    bot.last_error = str(exc)[:2000]
+                    await log_event(db, "bot.error", level="error", workspace_id=bot.workspace_id,
+                                    account_id=bot.account_id, bot_id=bot.id, error=str(exc)[:500])  # fmt: skip
+                    await db.commit()
+                    return {"bot_id": str(bot_id), "status": "error", "message": str(exc)}
             market = (market_factory or (lambda a: BinanceMarketData(testnet=a.is_testnet)))(account)
             try:
                 result = await run_bot_tick(db, bot, account, market)
@@ -139,26 +151,27 @@ async def reconcile_account(sessions: async_sessionmaker[AsyncSession], account_
     from app.services.accounts import client_for_account
     from app.services.reconciler import Reconciler
 
-    async with sessions() as db:
-        account = await db.get(Account, account_id)
-        if account is None or account.execution_mode != ExecutionMode.LIVE:
-            return {"account_id": str(account_id), "status": "skipped"}
-        async with client_for_account(account) as client:
-            summary = await Reconciler(db, account, client).run()
-        await db.commit()
-        return {"account_id": str(account_id), **summary}
+    # One reconciliation per account at a time: two concurrent passes could both re-create a missing stop.
+    async with redis_lock(f"reconcile:{account_id}", ttl=max(settings.RECONCILE_SECONDS * 2, 120)) as acquired:
+        if not acquired:
+            return {"account_id": str(account_id), "status": "skipped", "message": "locked"}
+        async with sessions() as db:
+            account = await db.get(Account, account_id)
+            if account is None or account.execution_mode != ExecutionMode.LIVE:
+                return {"account_id": str(account_id), "status": "skipped"}
+            async with client_for_account(account) as client:
+                summary = await Reconciler(db, account, client).run()
+            await db.commit()
+            return {"account_id": str(account_id), **summary}
 
 
 async def live_account_ids(sessions: async_sessionmaker[AsyncSession]) -> list[uuid.UUID]:
     if not settings.LIVE_TRADING_ENABLED:
         return []
     async with sessions() as db:
-        rows = await db.scalars(
-            select(Account.id).where(
-                Account.execution_mode == ExecutionMode.LIVE,
-                Account.status.in_((AccountStatus.RUNNING, AccountStatus.PAUSED, AccountStatus.KILLED)),
-            )
-        )
+        # Every live account, whatever its status: a STOPPED account (e.g. after the global kill switch or a
+        # restart) can still hold positions, and the stop guarantee must keep covering them.
+        rows = await db.scalars(select(Account.id).where(Account.execution_mode == ExecutionMode.LIVE))
         return list(rows)
 
 

@@ -18,10 +18,12 @@ from app.core.metrics import RECONCILER_CHANGES, safe_inc
 from app.exchanges.base import ERR_ORDER_NOT_FOUND, ExchangeAdapter, ExchangeAPIError
 from app.models import Account, Order, OrderSide, OrderStatus, Position, Trade
 from app.services.audit import log_event
+from app.services.protection import ProtectionGuard
 
 logger = logging.getLogger(__name__)
 
 OPEN_STATUSES = (OrderStatus.PENDING, OrderStatus.NEW, OrderStatus.PARTIALLY_FILLED)
+STOP_ORDER_TYPES = frozenset({"STOP_MARKET", "STOP", "TRAILING_STOP_MARKET"})
 
 
 def _dec(value: Any, default: str = "0") -> Decimal:
@@ -32,18 +34,33 @@ def _ms_to_dt(ms: int | str) -> datetime:
     return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc)
 
 
+def needs_protection_check(event: dict[str, Any]) -> bool:
+    """User-stream events after which the stop guarantee should run right away (not wait for the beat)."""
+    etype = event.get("e")
+    if etype == "ACCOUNT_UPDATE":
+        return any(_dec(p.get("pa")) != 0 for p in event.get("a", {}).get("P", []))
+    if etype == "ORDER_TRADE_UPDATE":
+        o = event.get("o", {})
+        protective = str(o.get("o") or o.get("ot") or "").upper() in STOP_ORDER_TYPES
+        return protective and str(o.get("X", "")).upper() in ("CANCELED", "EXPIRED", "REJECTED")
+    return etype == "ALGO_UPDATE"  # conditional (algo) order changed: cheap to re-check
+
+
 class Reconciler:
     def __init__(self, db: AsyncSession, account: Account, client: ExchangeAdapter) -> None:
         self.db = db
         self.account = account
         self.client = client
+        self.remote_positions: list[dict[str, Any]] | None = None  # non-flat, from the last sync_positions
 
     # ------------------------------------------------------------------ positions
     async def sync_positions(self, symbols: list[str] | None = None) -> int:
         from app.services.execution import get_or_create_position
 
         changed = 0
-        remote = {p["symbol"]: p for p in await self.client.get_positions(include_flat=True)}
+        rows = await self.client.get_positions(include_flat=True)
+        self.remote_positions = [p for p in rows if _dec(p.get("positionAmt")) != 0]
+        remote = {p["symbol"]: p for p in rows}
         if symbols is None:
             local = await self.db.scalars(
                 select(Position.symbol).where(Position.account_id == self.account.id, Position.quantity != 0)
@@ -209,11 +226,14 @@ class Reconciler:
             )
         )
         trades = await self.sync_trades(symbols) if symbols else 0
-        summary = {"positions_changed": positions, "orders_updated": orders, "trades_inserted": trades}
+        guard = await ProtectionGuard(self.db, self.account, self.client).run(self.remote_positions)
+        summary = {
+            "positions_changed": positions, "orders_updated": orders, "trades_inserted": trades, **guard.as_dict(),
+        }  # fmt: skip
         for kind, n in (("positions", positions), ("orders", orders), ("trades", trades)):
             if n:
                 safe_inc(RECONCILER_CHANGES, n, kind=kind)
-        if positions or orders or trades:
+        if positions or orders or trades or guard.restored or guard.closed:
             await log_event(
                 self.db, "reconcile.changes", workspace_id=self.account.workspace_id, account_id=self.account.id,
                 **summary,

@@ -188,6 +188,17 @@ def alert_from_audit(
         if event != "position.closed" and not fields.get("reason"):
             fields["reason"] = "stop loss" if event == "position.stop_loss" else "take profit"
         return build_payload(AlertEvent.POSITION_CLOSED, **ctx, **fields)
+    if event == "position.unprotected":
+        fields = {k: data.get(k) for k in ("symbol", "side", "quantity", "price", "stop_loss", "reason")}
+        return build_payload(
+            AlertEvent.POSITION_UNPROTECTED, severity="critical", dedup=f"unprot:{account_id}:{data.get('symbol')}",
+            **ctx, **fields,
+        )  # fmt: skip
+    if event == "position.stop_restored":
+        fields = {k: data.get(k) for k in ("symbol", "side", "quantity", "price", "stop_loss", "source")}
+        return build_payload(
+            AlertEvent.PROTECTIVE_STOP_RESTORED, dedup=f"restored:{account_id}:{data.get('symbol')}", **ctx, **fields
+        )
     if event == "bot.error":
         return build_payload(
             AlertEvent.BOT_ERROR,

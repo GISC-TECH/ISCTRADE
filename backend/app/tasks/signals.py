@@ -15,6 +15,7 @@ from celery.signals import (
     task_prerun,
     worker_init,
     worker_process_shutdown,
+    worker_ready,
 )
 
 from app.core.config import settings
@@ -88,6 +89,20 @@ def on_task_failure(name: str, task_id: str | None, exception: BaseException | N
 @worker_init.connect
 def _worker_init(**_: Any) -> None:
     start_metrics_server(settings.METRICS_PORT)
+
+
+@worker_ready.connect
+def _worker_ready(sender: Any = None, **_: Any) -> None:
+    """Restart recovery: reconcile live accounts (positions, orders, stop guarantee) right away."""
+    recover_on_start()
+
+
+def recover_on_start() -> bool:
+    if not settings.LIVE_TRADING_ENABLED:
+        return False
+    from app.services.dispatch import enqueue
+
+    return enqueue("accounts.reconcile_all", countdown=5)  # the per-account Redis lock dedups several workers
 
 
 @worker_process_shutdown.connect

@@ -34,6 +34,8 @@ class AlertEvent(str, Enum):
     BOT_EVENT_PAUSE = "bot_event_pause"
     MANUAL_ACTION = "manual_action"
     INFRA_ALERT = "infra_alert"
+    POSITION_UNPROTECTED = "position_unprotected"
+    PROTECTIVE_STOP_RESTORED = "protective_stop_restored"
     TEST = "test"
 
 
@@ -67,6 +69,12 @@ EVENTS: dict[str, EventSpec] = {
         Severity.INFO, True, "Ação manual de trading (ordem, fechamento, alavancagem)", throttled=False
     ),
     AlertEvent.INFRA_ALERT.value: EventSpec(Severity.WARNING, True, "Alerta de infraestrutura (Prometheus)"),
+    AlertEvent.POSITION_UNPROTECTED.value: EventSpec(
+        Severity.CRITICAL, True, "Posição desprotegida (sem stop na corretora)"
+    ),
+    AlertEvent.PROTECTIVE_STOP_RESTORED.value: EventSpec(
+        Severity.WARNING, True, "Stop de proteção recolocado / posição externa adotada"
+    ),
     AlertEvent.TEST.value: EventSpec(Severity.INFO, True, "Alerta de teste", throttled=False),
 }
 

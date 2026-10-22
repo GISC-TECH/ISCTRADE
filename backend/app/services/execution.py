@@ -372,6 +372,12 @@ class LiveExecutor:
                 return ExecutionResult(
                     False, f"protective_stop_failed: {stop_err}"[:255], order, avg or ref_price, order.executed_qty
                 )
+            if stop_loss is not None and not reduce_only:
+                # remembered on the position: the reconciler re-creates exactly this stop if it ever disappears
+                pos = await get_or_create_position(db, account, symbol, leverage)
+                pos.stop_loss, pos.is_paper = stop_loss, False
+                if take_profit is not None and not any(o.type == OrderType.TAKE_PROFIT_MARKET for o, _ in errors):
+                    pos.take_profit = take_profit
             for o, exc in errors:  # the stop is in place; a missing TP is not worth flattening the trade
                 logger.warning("take profit placement failed: %s", exc)
                 await log_event(
@@ -380,6 +386,18 @@ class LiveExecutor:
                 )  # fmt: skip
         # Fills (Trade rows) and positions are synchronized by the reconciler / user-data stream.
         return ExecutionResult(True, order.status.value, order, avg or ref_price, order.executed_qty)
+
+    async def place_protective_stop(
+        self, db: AsyncSession, account: Account, symbol: str, position_qty: Decimal, stop_price: Decimal, *,
+        leverage: int = 1, tag: str = "guard",
+    ) -> tuple[Order, BaseException | None]:  # fmt: skip
+        """(Re)place the closePosition STOP_MARKET protecting an existing position (reconciler guard)."""
+        entry_side = OrderSide.BUY if position_qty > 0 else OrderSide.SELL
+        order = self._protective_order(
+            account, None, symbol, entry_side, abs(position_qty), leverage, tag, OrderType.STOP_MARKET, stop_price
+        )
+        errors = await self._place_protective(db, symbol, [order])
+        return order, (errors[0][1] if errors else None)
 
     async def _undo_entry(self, order: Order, symbol: str, exit_side: OrderSide) -> str:
         """Best effort after a failed protective stop: cancel the rest of the entry and close what was filled."""

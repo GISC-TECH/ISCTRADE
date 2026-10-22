@@ -27,10 +27,11 @@ from app.exchanges.registry import get_adapter_class
 from app.models import Account, AccountStatus, BotConfig, ExecutionMode
 from app.services import realtime
 from app.services.accounts import client_for_account
+from app.services.dispatch import enqueue
 from app.services.health import write_streams_heartbeat
 from app.services.heartbeats import touch_file
 from app.services.prices import cache_prices
-from app.services.reconciler import Reconciler
+from app.services.reconciler import Reconciler, needs_protection_check
 from app.strategy.state_machine import ACTIVE_STATES
 from app.workers.market_feed import MarketFeed
 
@@ -250,6 +251,8 @@ class StreamSupervisor:
                     return
                 await Reconciler(db, acc, client).handle_event(event)
                 await db.commit()
+            if needs_protection_check(event):  # stop guarantee: verify the stop now (after the grace period)
+                enqueue("accounts.reconcile", account_id, countdown=settings.PROTECTION_GRACE_SECONDS + 5)
             update = user_event_summary(event)
             if update is not None:
                 await realtime.publish(
