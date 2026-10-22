@@ -19,8 +19,9 @@ from app.core.config import settings
 from app.models import Account, AccountStatus, ExecutionMode, Order, OrderSide, OrderStatus, OrderType, Position
 from app.services import prices
 from app.services.audit import log_event
-from app.services.equity import refresh_paper_marks
+from app.services.equity import open_positions, refresh_paper_marks
 from app.services.execution import PaperExecutor, is_global_kill_switch_on
+from app.services.position_alerts import check_positions
 
 logger = logging.getLogger(__name__)
 PriceSource = Callable[[str, bool], Awaitable[Decimal | None]]
@@ -177,6 +178,7 @@ async def process_account(db: AsyncSession, account: Account, *, global_kill: bo
             realized_pnl=res.realized_pnl,
         )  # fmt: skip
     await refresh_paper_marks(db, account, marks)
+    await check_positions(db, account, await open_positions(db, account))  # G-06: PnL / near stop / near liq.
 
 
 async def process_paper_orders(db: AsyncSession) -> PaperOrderReport:

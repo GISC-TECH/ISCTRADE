@@ -36,6 +36,9 @@ class AlertEvent(str, Enum):
     INFRA_ALERT = "infra_alert"
     POSITION_UNPROTECTED = "position_unprotected"
     PROTECTIVE_STOP_RESTORED = "protective_stop_restored"
+    POSITION_PNL = "position_pnl"
+    POSITION_NEAR_STOP = "position_near_stop"
+    POSITION_NEAR_LIQUIDATION = "position_near_liquidation"
     TEST = "test"
 
 
@@ -75,6 +78,9 @@ EVENTS: dict[str, EventSpec] = {
     AlertEvent.PROTECTIVE_STOP_RESTORED.value: EventSpec(
         Severity.WARNING, True, "Stop de proteção recolocado / posição externa adotada"
     ),
+    AlertEvent.POSITION_PNL.value: EventSpec(Severity.INFO, True, "PnL da posição atingiu um limiar"),
+    AlertEvent.POSITION_NEAR_STOP.value: EventSpec(Severity.WARNING, True, "Posição próxima do stop"),
+    AlertEvent.POSITION_NEAR_LIQUIDATION.value: EventSpec(Severity.CRITICAL, True, "Posição próxima da liquidação"),
     AlertEvent.TEST.value: EventSpec(Severity.INFO, True, "Alerta de teste", throttled=False),
 }
 

@@ -240,6 +240,15 @@ class Settings(BaseSettings):
     # Alerts (WhatsApp). Messages never contain credentials.
     ALERTS_ENABLED: bool = True  # master switch for generating alerts (history is kept even without a channel)
     ALERT_THROTTLE_MINUTES: int = 15
+    # Open-position alerts (G-06), live (reconciler) and paper (paper.process_orders). PnL levels: ROE % on the
+    # position margin and/or unrealized USDT (comma separated; negative = loss). Proximity in % of the mark price
+    # (0 disables). Each account/symbol/kind/level alerts at most once per POSITION_ALERT_THROTTLE_MINUTES.
+    POSITION_ALERTS_ENABLED: bool = True
+    POSITION_ALERT_PNL_ROE_PCT: Annotated[list[float], NoDecode] = [-50.0, -25.0, 50.0, 100.0]
+    POSITION_ALERT_PNL_USDT: Annotated[list[float], NoDecode] = []
+    POSITION_ALERT_STOP_PROXIMITY_PCT: float = Field(0.5, ge=0, le=50)
+    POSITION_ALERT_LIQ_PROXIMITY_PCT: float = Field(5.0, ge=0, le=100)
+    POSITION_ALERT_THROTTLE_MINUTES: int = Field(60, ge=0)
     ALERT_WS_DISCONNECT_SECONDS: int = 120
     ALERT_DAILY_SUMMARY_HOUR_UTC: int = 0  # summary of the previous UTC day, sent at HH:05 UTC
     WHATSAPP_ENABLED: bool = False
@@ -324,6 +333,8 @@ class Settings(BaseSettings):
         "X_QUERIES",
         "ECON_CALENDAR_COUNTRIES",
         "TRANSFER_ASSETS",
+        "POSITION_ALERT_PNL_ROE_PCT",
+        "POSITION_ALERT_PNL_USDT",
         mode="before",
     )
     @classmethod

@@ -18,6 +18,7 @@ from app.core.metrics import RECONCILER_CHANGES, safe_inc
 from app.exchanges.base import ERR_ORDER_NOT_FOUND, ExchangeAdapter, ExchangeAPIError
 from app.models import Account, Order, OrderSide, OrderStatus, Position, Trade
 from app.services.audit import log_event
+from app.services.position_alerts import check_positions, liquidation_prices
 from app.services.protection import ProtectionGuard
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,12 @@ class Reconciler:
         )
         trades = await self.sync_trades(symbols) if symbols else 0
         guard = await ProtectionGuard(self.db, self.account, self.client).run(self.remote_positions)
+        live_positions = await self.db.scalars(
+            select(Position).where(
+                Position.account_id == self.account.id, Position.is_paper.is_(False), Position.quantity != 0
+            )
+        )
+        await check_positions(self.db, self.account, list(live_positions), liquidation_prices(self.remote_positions))
         summary = {
             "positions_changed": positions, "orders_updated": orders, "trades_inserted": trades, **guard.as_dict(),
         }  # fmt: skip

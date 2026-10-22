@@ -41,6 +41,11 @@ evento (auditoria / WebSocket / Celery / beat)
 | `order_rejected` — ordem rejeitada pelo risco | ⚠️ aviso | ligado | `order.rejected` (demais motivos) |
 | `order_filled` — ordem executada | ℹ️ info | desligado | `order.filled` / `order.submitted` |
 | `position_opened` / `position_closed` | ℹ️ info | desligado | fills em paper; stop loss / take profit simulados |
+| `position_unprotected` — **posição desprotegida** (sem stop na corretora e não foi possível recolocar) | 🚨 crítico | ligado | guarda de stop do reconciliador (G-01); métrica `btp_positions_unprotected` |
+| `protective_stop_restored` — stop recolocado / posição externa adotada com stop de emergência | ⚠️ aviso | ligado | guarda de stop do reconciliador (G-01) |
+| `position_pnl` — PnL da posição cruzou um limiar (`POSITION_ALERT_PNL_ROE_PCT` / `POSITION_ALERT_PNL_USDT`) | ℹ️ lucro / ⚠️ prejuízo | ligado | live: reconciliador; paper: `paper.process_orders` (G-06) |
+| `position_near_stop` — preço a menos de `POSITION_ALERT_STOP_PROXIMITY_PCT`% do stop | ⚠️ aviso | ligado | idem |
+| `position_near_liquidation` — preço a menos de `POSITION_ALERT_LIQ_PROXIMITY_PCT`% da liquidação (live: `liquidationPrice` da corretora; paper: estimativa isolada) | 🚨 crítico | ligado | idem |
 | `bot_error` — bot em erro | ⚠️ aviso | ligado | `bot.error` |
 | `ws_disconnected` — WebSocket fora por mais de `ALERT_WS_DISCONNECT_SECONDS` (e reconexão ✅) | ⚠️ aviso | ligado | worker `streams` |
 | `reconciler_mismatch` — posições corrigidas pelo reconciliador | ⚠️ aviso | ligado | `reconcile.changes` |
@@ -74,6 +79,11 @@ Exemplo de mensagem:
 |---|---|
 | `ALERTS_ENABLED` | Liga/desliga todo o pipeline de alertas (padrão `true`). |
 | `ALERT_THROTTLE_MINUTES` | Janela antispam padrão (min). |
+| `POSITION_ALERTS_ENABLED` | Alertas de posição aberta (PnL, perto do stop, perto da liquidação), live e paper (padrão `true`). |
+| `POSITION_ALERT_PNL_ROE_PCT` | Limiares de ROE % sobre a margem, separados por vírgula; negativos = prejuízo (padrão `-50,-25,50,100`). Alerta o limiar mais extremo cruzado. |
+| `POSITION_ALERT_PNL_USDT` | Limiares em USDT de PnL não realizado (padrão vazio). |
+| `POSITION_ALERT_STOP_PROXIMITY_PCT` / `POSITION_ALERT_LIQ_PROXIMITY_PCT` | Distância (% do preço de marcação) que dispara os alertas de stop (0,5) e de liquidação (5); `0` desliga. |
+| `POSITION_ALERT_THROTTLE_MINUTES` | Cada conta/símbolo/tipo/limiar alerta no máximo uma vez nesta janela (padrão 60). |
 | `ALERT_WS_DISCONNECT_SECONDS` | Tempo de WebSocket desconectado antes de alertar (padrão 120). |
 | `ALERT_DAILY_SUMMARY_HOUR_UTC` | Hora UTC do resumo diário (padrão 0). |
 | `WHATSAPP_ENABLED` | `true` para enviar mensagens (padrão `false`: alertas só no histórico). |
