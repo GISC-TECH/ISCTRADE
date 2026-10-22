@@ -450,17 +450,23 @@ export interface AlertEventInfo {
 
 export interface AlertSettings {
   enabled: boolean;
-  recipients: string[];
+  recipients: string[]; // WhatsApp (E.164)
+  telegram_chat_ids?: string[];
+  emails?: string[];
   events: Record<string, boolean>;
   min_severity: AlertSeverity;
   throttle_minutes: number;
   uses_default_recipients: boolean;
   available_events: AlertEventInfo[];
-  channel: AlertChannelStatus;
+  channel: AlertChannelStatus; // WhatsApp (kept for compatibility)
+  channels?: AlertChannelStatus[]; // WhatsApp, Telegram, e-mail
 }
 
 export type AlertSettingsUpdate = Partial<
-  Pick<AlertSettings, "enabled" | "recipients" | "events" | "min_severity" | "throttle_minutes">
+  Pick<
+    AlertSettings,
+    "enabled" | "recipients" | "telegram_chat_ids" | "emails" | "events" | "min_severity" | "throttle_minutes"
+  >
 >;
 
 export interface AlertItem {
@@ -492,6 +498,7 @@ export interface HealthCheck {
 export interface MonitoringStatus {
   readiness: { status: "ready" | "degraded" | "not_ready"; ready: boolean; checks: Record<string, HealthCheck> };
   channel: AlertChannelStatus;
+  channels?: AlertChannelStatus[];
   alerts_24h: number;
   alerts_failed_24h: number;
   alerts_enabled: boolean;

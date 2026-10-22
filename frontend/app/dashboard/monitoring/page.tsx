@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { PROVIDERS, RecentAlerts } from "@/components/alerts-panel";
+import { ChannelBadge, channelList, CHANNELS, PROVIDERS, RecentAlerts } from "@/components/alerts-panel";
 import { useAuth } from "@/components/auth-provider";
 import { EmptyState, PageHeader } from "@/components/common";
 import { Alert } from "@/components/ui/alert";
@@ -29,7 +29,6 @@ const READINESS: Record<string, { label: string; variant: "success" | "warning" 
 function HealthCard({ status, onRefresh }: { status: MonitoringStatus | null; onRefresh: () => void }) {
   if (!status) return <EmptyState>Carregando status...</EmptyState>;
   const r = READINESS[status.readiness.status] ?? READINESS.not_ready;
-  const ch = status.channel;
   return (
     <div className="grid gap-4 md:grid-cols-3">
       <Card className="md:col-span-2">
@@ -66,19 +65,20 @@ function HealthCard({ status, onRefresh }: { status: MonitoringStatus | null; on
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle>Canal de alertas</CardTitle>
-          <CardDescription>WhatsApp · {PROVIDERS[ch.provider] ?? ch.provider}</CardDescription>
+          <CardTitle>Canais de alertas</CardTitle>
+          <CardDescription>Status no servidor e envios nas últimas 24h.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span>Status</span>
-            {ch.enabled && ch.configured ? (
-              <Badge variant="success">configurado</Badge>
-            ) : (
-              <Badge variant="warning">{ch.enabled ? "credenciais ausentes" : "desativado"}</Badge>
-            )}
-          </div>
-          <div className="flex justify-between">
+          {channelList(status).map((ch) => (
+            <div key={ch.channel} className="flex items-center justify-between gap-2">
+              <span>
+                {CHANNELS[ch.channel]?.label ?? ch.channel}
+                <span className="text-xs text-muted-foreground"> · {PROVIDERS[ch.provider] ?? ch.provider}</span>
+              </span>
+              <ChannelBadge ch={ch} />
+            </div>
+          ))}
+          <div className="flex justify-between border-t pt-2">
             <span>Alertas (24h)</span>
             <span>{status.alerts_24h}</span>
           </div>
@@ -86,13 +86,9 @@ function HealthCard({ status, onRefresh }: { status: MonitoringStatus | null; on
             <span>Falhas de envio (24h)</span>
             <span className={status.alerts_failed_24h ? "text-red-500" : ""}>{status.alerts_failed_24h}</span>
           </div>
-          <div className="flex justify-between">
-            <span>Destinatários padrão (servidor)</span>
-            <span>{ch.default_recipients}</span>
-          </div>
-          {!(ch.enabled && ch.configured) && (
+          {!channelList(status).some((c) => c.enabled && c.configured) && (
             <p className="text-xs text-muted-foreground">
-              Configure WHATSAPP_ENABLED, WHATSAPP_PROVIDER e WHATSAPP_API_TOKEN no .env (veja docs/ALERTS.md).
+              Nenhum canal configurado: os alertas ficam só no histórico. Veja docs/ALERTS.md.
             </p>
           )}
         </CardContent>

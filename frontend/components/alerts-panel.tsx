@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api, errorMessage } from "@/lib/api";
 import { dateTime } from "@/lib/format";
-import type { AlertItem, AlertSettings, AlertSeverity, AlertStatus } from "@/lib/types";
+import type { AlertChannelStatus, AlertItem, AlertSettings, AlertSeverity, AlertStatus } from "@/lib/types";
 
 export const SEVERITY: Record<AlertSeverity, { label: string; variant: "secondary" | "warning" | "destructive" }> = {
   info: { label: "info", variant: "secondary" },
@@ -35,7 +35,78 @@ export const PROVIDERS: Record<string, string> = {
   meta_cloud: "WhatsApp Cloud API (Meta)",
   evolution: "Evolution API",
   generic_http: "Gateway HTTP genérico",
+  telegram_bot_api: "Telegram Bot API",
+  smtp: "SMTP",
 };
+
+export const CHANNELS: Record<string, { label: string; defaultsEnv: string; setupEnv: string }> = {
+  whatsapp: {
+    label: "WhatsApp",
+    defaultsEnv: "WHATSAPP_TO",
+    setupEnv: "WHATSAPP_ENABLED, WHATSAPP_PROVIDER e WHATSAPP_API_TOKEN",
+  },
+  telegram: { label: "Telegram", defaultsEnv: "TELEGRAM_CHAT_IDS", setupEnv: "TELEGRAM_ENABLED e TELEGRAM_BOT_TOKEN" },
+  email: { label: "E-mail", defaultsEnv: "EMAIL_TO", setupEnv: "EMAIL_ENABLED e SMTP_HOST/SMTP_USER/SMTP_PASSWORD" },
+};
+
+export function channelList(s: { channel: AlertChannelStatus; channels?: AlertChannelStatus[] }): AlertChannelStatus[] {
+  return s.channels?.length ? s.channels : [s.channel];
+}
+
+export function ChannelBadge({ ch }: { ch: AlertChannelStatus }) {
+  return ch.enabled && ch.configured ? (
+    <Badge variant="success">configurado</Badge>
+  ) : (
+    <Badge variant={ch.enabled ? "warning" : "secondary"}>{ch.enabled ? "credenciais ausentes" : "desativado"}</Badge>
+  );
+}
+
+/** Server-side channel status (WhatsApp, Telegram, e-mail). No secrets are ever returned by the API. */
+export function ChannelsCard({ channels }: { channels: AlertChannelStatus[] }) {
+  const none = !channels.some((c) => c.enabled && c.configured);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Canais do servidor</CardTitle>
+        <CardDescription>Credenciais ficam no .env do servidor; aqui você define os destinatários do workspace.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <div className="grid gap-3 md:grid-cols-3">
+          {channels.map((ch) => {
+            const info = CHANNELS[ch.channel];
+            return (
+              <div key={ch.channel} className="space-y-1 rounded-md border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium">{info?.label ?? ch.channel}</span>
+                  <ChannelBadge ch={ch} />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Provedor: {PROVIDERS[ch.provider] ?? ch.provider}
+                  <br />
+                  Destinatários padrão ({info?.defaultsEnv ?? "servidor"}): {ch.default_recipients}
+                </p>
+                {!(ch.enabled && ch.configured) && info && (
+                  <p className="text-xs text-muted-foreground">Para ativar: {info.setupEnv} (veja docs/ALERTS.md).</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {none && (
+          <p className="text-xs text-muted-foreground">
+            Nenhum canal configurado: os alertas ficam registrados apenas no histórico abaixo.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const splitList = (raw: string) =>
+  raw
+    .split(/[\n,;]+/)
+    .map((r) => r.trim())
+    .filter(Boolean);
 
 export function SettingsCard({
   settings,
@@ -50,6 +121,9 @@ export function SettingsCard({
 }) {
   const [enabled, setEnabled] = useState(settings.enabled);
   const [recipients, setRecipients] = useState(settings.recipients.join("\n"));
+  const [chats, setChats] = useState((settings.telegram_chat_ids ?? []).join("\n"));
+  const [emails, setEmails] = useState((settings.emails ?? []).join("\n"));
+  const multiChannel = settings.telegram_chat_ids !== undefined;
   const [events, setEvents] = useState<Record<string, boolean>>(settings.events);
   const [minSeverity, setMinSeverity] = useState<AlertSeverity>(settings.min_severity);
   const [throttle, setThrottle] = useState(String(settings.throttle_minutes));
@@ -60,19 +134,18 @@ export function SettingsCard({
     setBusy(true);
     setMsg(null);
     try {
-      const list = recipients
-        .split(/[\n,;]+/)
-        .map((r) => r.trim())
-        .filter(Boolean);
       const saved = await api.updateAlertSettings({
         enabled,
-        recipients: list,
+        recipients: splitList(recipients),
+        ...(multiChannel ? { telegram_chat_ids: splitList(chats), emails: splitList(emails) } : {}),
         events,
         min_severity: minSeverity,
         throttle_minutes: Number(throttle) || 0,
       });
       onSaved(saved);
       setRecipients(saved.recipients.join("\n"));
+      setChats((saved.telegram_chat_ids ?? []).join("\n"));
+      setEmails((saved.emails ?? []).join("\n"));
       setMsg({ ok: true, text: "Configurações salvas." });
     } catch (e) {
       setMsg({ ok: false, text: errorMessage(e) });
@@ -108,7 +181,8 @@ export function SettingsCard({
         <div>
           <CardTitle>Alertas do workspace</CardTitle>
           <CardDescription>
-            Eventos enviados por WhatsApp. {canManage ? "" : "Somente administradores do workspace podem alterar."}
+            Destinatários, eventos e limites de envio.{" "}
+            {canManage ? "" : "Somente administradores do workspace podem alterar (destinatários aparecem mascarados)."}
           </CardDescription>
         </div>
         {canManage && (
@@ -130,22 +204,40 @@ export function SettingsCard({
         </label>
 
         <div className="grid gap-4 md:grid-cols-3">
-          <div className="space-y-1 md:col-span-1">
-            <Label htmlFor="recipients">Números do WhatsApp (E.164, um por linha)</Label>
-            <textarea
-              id="recipients"
-              className="min-h-[96px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              placeholder="+5511999999999"
-              value={recipients}
-              disabled={!canManage}
-              onChange={(e) => setRecipients(e.target.value)}
-            />
-            {settings.uses_default_recipients && (
-              <p className="text-xs text-muted-foreground">
-                Vazio: usa os destinatários padrão do servidor (WHATSAPP_TO).
-              </p>
-            )}
-          </div>
+          <RecipientsField
+            id="recipients"
+            label="WhatsApp (E.164, um por linha)"
+            placeholder="+5511999999999"
+            value={recipients}
+            onChange={setRecipients}
+            disabled={!canManage}
+            hint="Vazio: usa os destinatários padrão do servidor (WHATSAPP_TO)."
+          />
+          {multiChannel && (
+            <>
+              <RecipientsField
+                id="telegram-chats"
+                label="Telegram (chat IDs, um por linha)"
+                placeholder="123456789 ou -1001234567890"
+                value={chats}
+                onChange={setChats}
+                disabled={!canManage}
+                hint="Envie /start ao bot antes. Vazio: usa TELEGRAM_CHAT_IDS do servidor."
+              />
+              <RecipientsField
+                id="alert-emails"
+                label="E-mails (um por linha)"
+                placeholder="risco@empresa.com.br"
+                value={emails}
+                onChange={setEmails}
+                disabled={!canManage}
+                hint="Vazio: usa EMAIL_TO do servidor."
+              />
+            </>
+          )}
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
           <div className="space-y-1">
             <Label htmlFor="severity">Severidade mínima</Label>
             <Select
@@ -200,6 +292,42 @@ export function SettingsCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function RecipientsField({
+  id,
+  label,
+  placeholder,
+  value,
+  onChange,
+  disabled,
+  hint,
+}: {
+  id: string;
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled: boolean;
+  hint: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id}>{label}</Label>
+      <textarea
+        id={id}
+        aria-describedby={`${id}-hint`}
+        className="min-h-[96px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+        placeholder={placeholder}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+        {hint} Máximo de 10.
+      </p>
+    </div>
   );
 }
 

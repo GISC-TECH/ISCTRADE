@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { RecentAlerts, SettingsCard, STATUS } from "@/components/alerts-panel";
+import { channelList, ChannelsCard, RecentAlerts, SettingsCard, STATUS } from "@/components/alerts-panel";
 import { useAuth } from "@/components/auth-provider";
 import { PageHeader } from "@/components/common";
 import { Alert } from "@/components/ui/alert";
@@ -29,33 +29,11 @@ export default function AlertsPage() {
       .catch((e) => setError(errorMessage(e)));
   }, [workspace?.id]);
 
-  const ch = settings?.channel;
-
   return (
     <div className="space-y-6">
-      <PageHeader title="Alertas" description="Destinatários do WhatsApp, eventos, severidade mínima e histórico." />
+      <PageHeader title="Alertas" description="Destinatários (WhatsApp, Telegram e e-mail), eventos, severidade mínima e histórico." />
       {error && <Alert variant="destructive">{error}</Alert>}
-      {ch && (
-        <Card>
-          <CardContent className="flex flex-wrap items-center gap-3 pt-6 text-sm">
-            <span>Canal WhatsApp do servidor:</span>
-            {ch.enabled && ch.configured ? (
-              <Badge variant="success">configurado</Badge>
-            ) : (
-              <Badge variant="warning">{ch.enabled ? "credenciais ausentes" : "desativado"}</Badge>
-            )}
-            <span className="text-muted-foreground">
-              Provedor: {ch.provider} · destinatários padrão (WHATSAPP_TO): {ch.default_recipients}
-            </span>
-            {!(ch.enabled && ch.configured) && (
-              <span className="w-full text-xs text-muted-foreground">
-                Sem canal configurado os alertas ficam só no histórico. Configure WHATSAPP_ENABLED, WHATSAPP_PROVIDER e
-                WHATSAPP_API_TOKEN no .env do servidor (veja docs/ALERTS.md).
-              </span>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      {settings && <ChannelsCard channels={channelList(settings)} />}
       {settings && (
         <SettingsCard
           key={workspace?.id ?? "ws"}

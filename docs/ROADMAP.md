@@ -75,4 +75,4 @@
 - [ ] Critérios objetivos para aumento de capital (ex.: 3 meses com drawdown dentro do limite)
 - [ ] Aumentos graduais (ex.: +25% por etapa) com revisão de risco
 - [ ] Revisão de segurança externa
-- [ ] 2FA (TOTP) para login
+- [x] 2FA (TOTP) para login (obrigatório para super-admin e operação live; política opcional para todos)

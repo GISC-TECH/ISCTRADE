@@ -52,12 +52,40 @@
 - Rate limiting (Redis, com fallback em memória) em login e registro. `ALLOW_REGISTRATION=false` desativa novos cadastros.
 - RBAC por workspace: `admin` (gerencia contas, membros, reset de kill switch), `trader` (opera contas e bots), `viewer` (somente leitura). O dono do workspace é sempre `admin`. O papel global `admin` (super-admin) acessa o painel de administração.
 - Isolamento de dados por workspace em todas as consultas; o header `X-Workspace-ID` é validado contra a associação do usuário.
+- **2FA (TOTP)** — veja a seção abaixo.
 - **WebSocket em tempo real** (`/api/v1/ws`): autenticado pelo mesmo cookie httpOnly (com checagem de
   `token_version`), `Origin` obrigatoriamente em `CORS_ORIGINS` (contra *cross-site WebSocket hijacking*), só o
   canal do workspace do qual o usuário é membro (revalidado a cada 60 s; fechamento `4401` ao expirar o token),
   limite de conexões por usuário e de assinaturas por conexão, mensagens do cliente limitadas a 4 KB. Os eventos
   carregam apenas dados já visíveis na API do workspace (nunca chaves, segredos ou tokens); alertas sem workspace
   (falhas de tarefas, streams) não são transmitidos.
+
+## Autenticação em dois fatores (TOTP)
+- **Padrão RFC 6238** (SHA-1, 6 dígitos, 30 s, tolerância de ±1 janela) implementado sem dependências externas
+  (`app/core/totp.py`); o QR code é gerado no servidor como SVG (`qrcode`). Compatível com Google Authenticator,
+  Aegis, 1Password, Authy etc.
+- **Segredo cifrado** com a mesma chave AES-256-GCM das credenciais (`MASTER_ENCRYPTION_KEY`), com AAD ligado ao
+  usuário (`totp:<user_id>`) — um segredo copiado para outra linha não decifra. O segredo pendente (cadastro ainda não
+  confirmado) fica em coluna separada e só vira ativo após um código válido.
+- **Anti-replay**: o último passo de tempo aceito é gravado (`totp_last_step`); o mesmo código não serve duas vezes.
+- **Códigos de recuperação**: 10 códigos `XXXXX-XXXXX` exibidos uma única vez, guardados como SHA-256 com sal
+  individual e removidos ao serem usados; podem ser regenerados (exige código).
+- **Login em duas etapas**: com 2FA ativo, `POST /auth/login` não emite cookies; devolve um `mfa_token` (JWT tipo
+  `mfa`, válido por `TOTP_CHALLENGE_MINUTES`) que precisa ser enviado com o código em `POST /auth/login/2fa`.
+- **Limite de tentativas**: além do rate limit por IP, cada usuário tem orçamento de `TOTP_MAX_FAILURES` códigos
+  errados por 15 min (depois `429`), em login, desativação e regeneração.
+- **Quando é obrigatório**:
+  - super-admins, para usar `/admin` (`TOTP_REQUIRED_FOR_ADMINS=true`);
+  - quem tem papel `trader`/`admin` num workspace com conta **live**, quando `LIVE_TRADING_ENABLED=true` e
+    `TOTP_REQUIRED_FOR_LIVE=true`: sem 2FA a API responde `403` com o header `X-MFA-Enrollment-Required` e a interface
+    leva à página **Segurança**; criar/ativar/iniciar conta live, iniciar bot live, enviar ordem e alterar alavancagem
+    em conta live também exigem 2FA. Fechar posições e cancelar ordens continuam liberados (reduzem risco);
+  - todos os usuários, se o super-admin ativar a política em **Admin → Política de 2FA**.
+- **Desativar** exige senha + código (TOTP ou recuperação) e é recusado enquanto o 2FA for obrigatório para a pessoa.
+  Um super-admin pode **redefinir o 2FA** de outro usuário (perda do celular e dos códigos): a ação incrementa
+  `token_version` (encerra todas as sessões) e fica na auditoria.
+- Eventos auditados: `auth.2fa_setup_started`, `auth.2fa_enabled`, `auth.2fa_disabled`,
+  `auth.2fa_recovery_regenerated`, `auth.login_2fa_failed`, `admin.user_2fa_reset` e `admin.security_policy_updated`.
 
 ## Infraestrutura
 - Apenas o Caddy expõe portas públicas em produção (80/443). PostgreSQL, Redis, backend e frontend ficam em redes internas (o override de produção remove as portas publicadas).
@@ -102,7 +130,7 @@ Procedimentos completos (go-live, alertas, backups/restauração, monitor extern
 6. **Restaure** um backup se houver corrupção de dados (`scripts/restore_db.sh`, veja [RUNBOOK.md](RUNBOOK.md#restauracao)).
 
 ## Limitações conhecidas
-- Sem 2FA no login.
+- 2FA apenas por TOTP (sem WebAuthn/passkeys). Quem perder o autenticador e os códigos de recuperação depende de um super-admin para redefinir.
 - A trilha de auditoria fica no mesmo banco, mas é encadeada com HMAC e verificável (veja acima); não é WORM.
 - Sem rotação automática da `MASTER_ENCRYPTION_KEY`.
 - Alertas via WhatsApp, Telegram e e-mail (veja [ALERTS.md](ALERTS.md)). Tokens e senha SMTP ficam só no `.env`; o worker Celery e o `streams` expõem métricas sem autenticação nas portas internas 9101/9102 (não publique essas portas).

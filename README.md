@@ -9,6 +9,8 @@
 > - Nunca habilite permissão de **saque** nas chaves de API; restrinja por **IP**.
 > - Em conta real, use apenas capital que você pode perder integralmente.
 > - Você é o único responsável pelas ordens enviadas pela sua instância.
+>
+> **Aviso regulatório e tributário (residentes no Brasil).** Este software não é corretora, não custodia recursos e não presta consultoria, recomendação de investimento nem serviço jurídico ou contábil. A prestação de serviços de ativos virtuais no Brasil é regulada pelo Banco Central (Resoluções BCB nº 519, 520 e 521) e operações com derivativos podem estar sujeitas às normas da CVM: verifique se a corretora utilizada pode atender residentes no Brasil antes de operar com dinheiro real. Ganhos com criptoativos e em plataformas no exterior podem gerar imposto e obrigações acessórias; as regras mudam com frequência e qualquer referência tributária deve ser **confirmada com um contador ou advogado tributarista**. A interface exige a ciência deste aviso no primeiro acesso (página `/legal`) e oferece exportação CSV de execuções e PnL para a contabilidade.
 
 ## Visão geral
 
@@ -20,6 +22,7 @@ Plataforma **self-hosted** para automação e monitoramento de operações em **
 
 ### Funcionalidades
 - **Autenticação**: registro/login, JWT de acesso + refresh em cookies `httpOnly`, logout de todas as sessões, troca de senha, rate limiting de login/registro. O primeiro usuário cadastrado vira super-admin.
+- **2FA (TOTP)**: cadastro por QR code (Google Authenticator, Aegis, 1Password…), 10 códigos de recuperação de uso único, verificação no login, desativação com senha + código. Obrigatório para super-admins (painel Admin), para quem pode operar contas **live** e, opcionalmente, para todos os usuários (política no painel Admin) — veja [docs/SECURITY.md](docs/SECURITY.md#autenticação-em-dois-fatores-totp).
 - **Workspaces e RBAC**: papéis `admin`, `trader`, `viewer` por workspace; membros, troca de workspace ativo.
 - **Contas Binance**: conexão com chaves criptografadas, verificação de credenciais, start/stop, reset do kill switch, limites de risco por conta.
 - **Bots**: estratégias `grid`, `ema_cross`, `rsi_bollinger`, `rsi_mean_reversion`, `bollinger_reversion`, `bollinger_squeeze`, `donchian_breakout`, `ema_adx_trend` e `supertrend` (stop ATR obrigatório, ver [docs/STRATEGIES.md](docs/STRATEGIES.md)) com máquina de estados (`idle → running → paused/stopped/error/killed`), executados pelo Celery a cada candle fechado.
@@ -29,7 +32,8 @@ Plataforma **self-hosted** para automação e monitoramento de operações em **
 - **Backtest**: motor com taxas, slippage, stops com *gap*, mesmas regras de risco do ao vivo; métricas (retorno, drawdown, Sharpe, win rate, profit factor, buy & hold) e curva de patrimônio. Dados públicos da Binance ou CSV próprio.
 - **Integração Binance**: cliente REST assinado, WebSockets (user data + mark price) com reconexão, reconciliador de ordens/posições.
 - **Dashboard**: patrimônio, PnL, posições, curva de equity, histórico de ordens/execuções/auditoria.
-- **Admin**: estatísticas globais, usuários, workspaces, auditoria global e **kill switch global**.
+- **Posições consolidadas e PnL & relatórios**: todas as posições abertas do workspace (por conta, modo, sem stop); PnL realizado por dia/semana/mês agrupado por conta, bot, estratégia ou símbolo, com gráficos; exportação CSV (vírgula ou ponto e vírgula) de execuções e de PnL/taxas por dia e conta.
+- **Admin**: estatísticas globais, usuários (com status de 2FA e redefinição), política de 2FA, workspaces, auditoria global e **kill switch global**.
 - **Monitoramento**: logs JSON com `request_id`, `/health/ready` (beat, workers, WebSockets, ticks), métricas Prometheus (`/metrics`, só rede interna), Prometheus + Alertmanager (regras → WhatsApp/webhook) + Grafana opcionais, dead man's switch externo e tela **Monitoramento** (saúde, alertas, configurações).
 - **Alertas via WhatsApp**: WAGO (padrão), wago-api self-hosted, Meta Cloud API, Evolution API ou gateway HTTP genérico; kill switch, limites de risco, ordens, posições, erros, WebSocket, divergências, falhas de tarefas e resumo diário de PnL — veja [docs/ALERTS.md](docs/ALERTS.md).
 

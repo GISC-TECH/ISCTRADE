@@ -97,7 +97,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | ID | Item | Área | Prio | Status | Esforço | Evidência / arquivo |
 |---|---|---|---|---|---|---|
 | G-03b | `ALLOW_REGISTRATION=true` aceito em produção: qualquer visitante cria usuário + workspace (e, sendo admin do próprio workspace, pode pôr conta em `live` se `LIVE_TRADING_ENABLED=true`) | Auth | **P0** | **Confirmado** | P | `core/config.py:production_problems`, `.env.example` |
-| G-22 | Sem 2FA (TOTP) no login | Auth | **P0** | Faltando | M | `ROADMAP` Fase 5; `SECURITY.md` |
+| G-22 | Sem 2FA (TOTP) no login | Auth | **P0** | ✅ **Resolvido** — TOTP (RFC 6238) com QR, segredo cifrado AES-GCM, anti-replay, 10 códigos de recuperação com hash, login em duas etapas (`/auth/login/2fa`), limite de tentativas por usuário, desativação com senha + código; obrigatório para super-admin (`/admin`) e para quem opera contas live, política opcional "2FA para todos" e reset pelo admin (migração `0010`; `SECURITY.md` §2FA; página **Segurança**) | M | `ROADMAP` Fase 5; `SECURITY.md` |
 | G-23 | `CORS_ORIGINS` precisa conter `https://<DOMAIN>`, senão o WebSocket é recusado (403) e o painel fica em "Reconectando…"; `.env.example` traz só localhost e o `deploy.sh` não valida | Config/Realtime | P2 | ✅ **Resolvido** — `.env.example` documenta; `deploy.sh` aborta se `CORS_ORIGINS` não contém `https://$DOMAIN`; WS registra "websocket origin rejected" no log | P | `realtime_ws.py` (checagem de Origin); verificado |
 | G-24 | `orjson 3.11.5` com PYSEC-2026-107 (o AUDIT.md diz "pip-audit limpo") | Dependências | P2 | ✅ **Resolvido** — `orjson==3.11.9`; `pip-audit` limpo; CI roda `pip-audit` | P | `backend/requirements.txt` |
 | G-25 | `npm audit`: 7 high + 2 moderate na cadeia build-time (Tailwind 3, eslint-config-next); migrar para Tailwind 4 | Dependências | P3 | Pendente | M | `frontend/package.json` |
@@ -115,10 +115,10 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | F-01 | CI (lint + testes + build) | **P0** | **Parcial** — workflow completo e testado localmente em `docs/ci/ci.yml` (+ `pip-audit`, `npm audit`, `promtool`/`amtool`, shellcheck dos scripts de backup, build da imagem de backup); **ativação** exige token com escopo `workflow` (passos em `docs/ci/README.md`) | P | `docs/ci/ci.yml`; `ROADMAP` Fase 0 |
 | F-02 | Auditoria à prova de adulteração (hash chain) | P2 | ✅ Resolvido | M | ver G-26 |
 | F-03 | Limites de risco agregados por workspace | P0 | Faltando | M | ver G-02 |
-| F-04 | PnL por período (`/history/pnl`, gráfico 30 dias) | P2 | Faltando | M | `history.py` não tem a rota; `AGENT_GUIDE` Etapa 6 |
-| F-05 | Posições consolidadas | P2 | Parcial — `GET /history/positions` sem `account_id` já agrega o workspace, mas sem rótulo da conta e sem tabela na UI | P | `history.py:list_positions` |
+| F-04 | PnL por período (`/history/pnl`, gráfico 30 dias) | P2 | ✅ Resolvido — `GET /history/pnl` (dia/semana/mês, agrupado por conta/bot/estratégia/símbolo, taxas USD separadas) e página **PnL & relatórios** com barras empilhadas + PnL acumulado | M | `history.py` não tem a rota; `AGENT_GUIDE` Etapa 6 |
+| F-05 | Posições consolidadas | P2 | ✅ Resolvido — página **Posições** (todas as contas do workspace, rótulo da conta, filtro paper/live, nocional, PnL não realizado, posições sem stop, atualização em tempo real) | P | `history.py:list_positions` |
 | F-06 | Alertas no Telegram / e-mail | P2 | ✅ Resolvido — canais `telegram` (Bot API) e `email` (SMTP STARTTLS/SSL) no mesmo pipeline, destinatários por workspace (`telegram_chat_ids`, `emails`, migração `0011`) com padrão do servidor; `docs/ALERTS.md` | M | `services/alerts/telegram.py`, `services/alerts/email.py` |
-| F-07 | TOTP 2FA | P0 | Faltando | M | ver G-22 |
+| F-07 | TOTP 2FA | P0 | ✅ Resolvido — ver G-22 | M | ver G-22 |
 | F-08 | Funding no backtest | P2 | ✅ Resolvido — `funding.mode` auto/exchange/archive/csv/constant/off; `data_source: archive` (data.binance.vision) | M | `backtest/funding.py`, `backtest/archive.py`; `STRATEGIES.md` §Funding |
 | F-09 | Walk-forward / out-of-sample | P2 | ✅ Resolvido — `POST /strategies/walk-forward` (grid por fold, IS × OOS, curva OOS encadeada, eficiência, estabilidade) | M | `backtest/walkforward.py`; `STRATEGIES.md` §Walk-forward |
 | F-10 | Cache local de klines (TimescaleDB opcional) | P3 | Faltando | M | `backtest/data.py`; `AGENT_GUIDE` Etapa 7 |
@@ -127,7 +127,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | F-13 | Paper com preenchimento parcial | P2 | Faltando | M | ver G-10a |
 | F-14 | Estratégia de funding (contrarian) | P3 | ✅ Resolvido — `funding_contrarian` (funding extremo + z-score + confirmação EMA, stop ATR); `ctx.funding` alimentado no backtest/walk-forward (sem lookahead) e nos bots (histórico público da exchange) | M | `strategy/funding.py`; `STRATEGIES.md` §Funding contrarian |
 | F-15 | WebSocket da Bybit | P3 | Faltando (adaptador só REST, experimental) | G | `exchanges/bybit.py:616` |
-| F-16 | Escolha de exchange no formulário de contas | P3 | Faltando no frontend (API tem `GET /accounts/exchanges` e campo `exchange`) | P | `frontend/app/dashboard/accounts/page.tsx` |
+| F-16 | Escolha de exchange no formulário de contas | P3 | ✅ Resolvido — seletor de corretora no formulário (lista de `GET /accounts/exchanges`; experimentais só aparecem se habilitadas, com notas; testnet desabilitado quando não suportado) | P | `frontend/app/dashboard/accounts/page.tsx` |
 | F-17 | Modo spot | P3 | Faltando (só USDT-M) | G | nenhuma referência a spot |
 | F-18 | Critérios objetivos de aumento de capital / aumentos graduais | P1 | Faltando (operacional + suporte no app) | M | `ROADMAP` Fase 5 |
 | F-19 | Revisão de segurança externa | P1 | Faltando | — | `ROADMAP` Fase 5 |
@@ -138,14 +138,14 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 
 | ID | Item | Prio | Status | Esforço | Evidência |
 |---|---|---|---|---|---|
-| U-01 | Sem `not-found.tsx`/`error.tsx`/`loading.tsx`: rotas inexistentes mostram a página padrão do Next em inglês ("This page could not be found"); erros de render caem no "Application error" genérico | P3 | Faltando (verificado) | P | `frontend/app/` |
-| U-02 | Mobile: menu lateral vira bloco de 13 links (~400 px) no topo de toda página, sem menu recolhível | P3 | Parcial (verificado em 390 px) | P | `components/app-shell.tsx` |
-| U-03 | Formatação: painel de ordem mostra "limite 1.0000000000%" (Decimal cru) | P3 | Bug (verificado) | P | `components/trading-panel.tsx:247` |
-| U-04 | Sem página de Configurações (2FA, sessões, preferências) e sem gestão de presets (presets fixos no código) | P2 | Faltando | M | `strategy/presets.py`; rotas do frontend |
-| U-05 | Config. de alertas existe (dentro de Monitoramento), mas não há página dedicada de histórico/filtros de alertas | P3 | Parcial | P | `app/dashboard/monitoring/page.tsx` |
+| U-01 | Sem `not-found.tsx`/`error.tsx`/`loading.tsx`: rotas inexistentes mostram a página padrão do Next em inglês ("This page could not be found"); erros de render caem no "Application error" genérico | P3 | ✅ Resolvido — `not-found.tsx`, `error.tsx`, `global-error.tsx` e `dashboard/loading.tsx` em português; favicon | P | `frontend/app/` |
+| U-02 | Mobile: menu lateral vira bloco de 13 links (~400 px) no topo de toda página, sem menu recolhível | P3 | ✅ Resolvido — cabeçalho fixo + menu gaveta no mobile (Esc fecha, fecha ao navegar, `aria-expanded`), sidebar só no desktop | P | `components/app-shell.tsx` |
+| U-03 | Formatação: painel de ordem mostra "limite 1.0000000000%" (Decimal cru) | P3 | ✅ Resolvido — `pctLimit`/`pct` em `lib/format.ts` usados no painel de ordem, contas e funding ("limite 1%") | P | `components/trading-panel.tsx:247` |
+| U-04 | Sem página de Configurações (2FA, sessões, preferências) e sem gestão de presets (presets fixos no código) | P2 | Parcial — página **Segurança** (2FA, códigos de recuperação) + Perfil (senha, sessões); gestão de presets ainda fixa no código | M | `strategy/presets.py`; rotas do frontend |
+| U-05 | Config. de alertas existe (dentro de Monitoramento), mas não há página dedicada de histórico/filtros de alertas | P3 | ✅ Resolvido — página **Alertas** (canais do servidor, destinatários WhatsApp/Telegram/e-mail, eventos, severidade, antispam, histórico com filtros por evento e status) | P | `app/dashboard/monitoring/page.tsx` |
 | U-06 | Sem testes de frontend (unitários ou e2e/Playwright) e sem `typecheck` em `package.json` | P2 | Faltando | M | `frontend/package.json` |
-| U-07 | ESLint: 12 avisos `react-hooks/set-state-in-effect` | P3 | Pendente | P | `npm run lint` |
-| U-08 | Acessibilidade: login/cadastro sem `<h1>`; 1 campo sem rótulo em Visão geral, Tempo real e Admin; sem *skip link* | P3 | Parcial | P | crawl headless |
+| U-07 | ESLint: 12 avisos `react-hooks/set-state-in-effect` | P3 | ✅ Resolvido — 0 avisos no `npm run lint` (estado derivado, cadeias de Promise, `useSyncExternalStore`) | P | `npm run lint` |
+| U-08 | Acessibilidade: login/cadastro sem `<h1>`; 1 campo sem rótulo em Visão geral, Tempo real e Admin; sem *skip link* | P3 | ✅ Resolvido — `<h1>` no login/cadastro, rótulos (`aria-label`) nos seletores, *skip link*, `aria-current`, contraste dos badges, tabelas roláveis focáveis; axe-core (WCAG 2 A/AA) sem violações nas páginas principais em 1366 px e 390 px | P | crawl headless |
 | U-09 | Sem Caddy (acesso direto em :3000, sugerido no README) o tempo real fica em "Conectando…" para sempre (rewrite do Next não encaminha WebSocket; exige `NEXT_PUBLIC_WS_URL`) | P3 | ✅ **Resolvido** — verificado: o rewrite do Next 16 encaminha o *upgrade* de WebSocket; a falha era a Origin `http://<host>:3000` fora de `CORS_ORIGINS`. Fora de produção o WS aceita origens *loopback* em qualquer porta; README/REALTIME/.env.example corrigidos | P | `lib/realtime.ts`, `next.config.mjs` |
 | U-10 | Cadastro não faz login automático (volta para a tela de login) | P3 | UX | P | `POST /auth/register` não emite cookies |
 | ✅ | i18n: interface em português em todas as páginas verificadas; `lang=pt-BR`; links do menu sem quebras; estados vazios presentes ("Sem posições abertas", "Nenhuma ordem") | — | OK | — | crawl headless |
@@ -164,8 +164,8 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 
 | ID | Item | Prio | Status | Esforço | Evidência |
 |---|---|---|---|---|---|
-| D-01 | Nota regulatória BCB 519/520/521 + CVM existe em `EXCHANGES.md`, mas **não** no aviso de risco do README nem na UI (ex.: ao ativar conta live/mainnet) | P1 | Parcial | P | `README.md`, `docs/EXCHANGES.md` §2 |
-| D-02 | Sem nota tributária (declaração mensal à Receita — IN RFB 1888/2019 e normas sucessoras (DeCripto) — confirmar a vigente; tributação de aplicações no exterior — Lei 14.754/2023; guarda de relatórios); sem exportação CSV de trades/PnL para contabilidade | P1 | Faltando | M | — |
+| D-01 | Nota regulatória BCB 519/520/521 + CVM existe em `EXCHANGES.md`, mas **não** no aviso de risco do README nem na UI (ex.: ao ativar conta live/mainnet) | P1 | ✅ Resolvido — aviso regulatório (BCB 519/520/521, CVM) no README, rodapé de todas as páginas, página `/legal` e aceite obrigatório no primeiro acesso (versão em `core/legal.py`) | P | `README.md`, `docs/EXCHANGES.md` §2 |
+| D-02 | Sem nota tributária (declaração mensal à Receita — IN RFB 1888/2019 e normas sucessoras (DeCripto) — confirmar a vigente; tributação de aplicações no exterior — Lei 14.754/2023; guarda de relatórios); sem exportação CSV de trades/PnL para contabilidade | P1 | ✅ Resolvido (UI/CSV) — aviso tributário genérico (sem citar normas como fato; confirmar com profissional) na UI/README e exportação CSV de execuções e PnL/taxas por dia e conta (`/history/export/*.csv`, proteção contra injeção de fórmula, auditado). As normas citadas nesta linha seguem como referência a confirmar | M | — |
 | D-03 | Runbooks: go-live, incidente, restauração de backup, rotação de chaves, perda do servidor | P1 | ✅ **Resolvido** — ver G-07 (`docs/RUNBOOK.md`) | M | `SECURITY.md` |
 | D-04 | Docs desatualizadas: "Next.js 14" em README/AGENTS.md/ARCHITECTURE/AGENT_GUIDE (é 16.4.2/React 19); `AGENTS.md` diz head `0007` (é `0008`); README não lista `celery_worker_trading` | P3 | ✅ **Resolvido** — Next.js 16 em README/AGENTS/ARCHITECTURE/AGENT_GUIDE; head de migração atualizado; README lista `celery_worker_trading`, monitoramento e backup | P | arquivos citados |
 | D-05 | `AUDIT.md` afirma pip-audit limpo — não é mais verdade (G-24) | P3 | ✅ **Resolvido** — `AUDIT.md` atualizado (pip-audit/npm audit de 2026-10-22) | P | `docs/AUDIT.md` item 8 |
@@ -178,7 +178,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 1. **Ativar o CI** (F-01) e acrescentar `pip-audit`, `npm audit --omit=dev`, `gitleaks` e limiar de cobertura (G-30, B-02).
 2. **Fechar cadastro e bootstrap** (G-03b, G-17): `ALLOW_REGISTRATION=false` por padrão; em produção bloquear o start se
    estiver `true` sem `ADMIN_BOOTSTRAP_TOKEN`; CLI `python -m app.cli create-admin`.
-3. **TOTP 2FA** obrigatório para super-admin e para quem altera contas live (G-22).
+3. ~~**TOTP 2FA** obrigatório para super-admin e para quem altera contas live (G-22).~~ ✅ feito.
 4. **Guarda de stop contínua** (G-01): no reconciliador, para cada posição live verificar Algo Orders abertas; se faltar
    stop, recolocar (reduce-only) ou fechar, gerar `position.unprotected` (crítico) e alerta.
 5. **Limites agregados + teto live** (G-02): `max_total_notional_usdt`, `max_daily_loss_usdt`, `max_open_positions`
@@ -201,12 +201,12 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 2. Paper com parciais/profundidade (F-13); riscos com taxas e slippage do stop (G-05).
 3. Testes de integração com Postgres+Redis+Celery reais e testnet (G-21); cobrir `streams.py`, `prices.py`, tasks (B-01).
 4. Auditoria com hash encadeado (G-26); Telegram/e-mail (F-06); reset de senha e sessões (G-28).
-5. Nota regulatória e tributária no README/UI e exportação CSV (D-01, D-02).
+5. ~~Nota regulatória e tributária no README/UI e exportação CSV (D-01, D-02).~~ ✅ feito.
 
 ### Fase D — Produto e escala (contínuo)
-PnL por período e posições consolidadas (F-04, F-05), página de configurações e gestão de presets (U-04),
-404/erro em português, menu mobile, testes de frontend (U-01, U-02, U-06), Tailwind 4 (G-25), rotação da chave mestra
-(G-29), supply chain com lockfile e digests (G-30), escolha de exchange na UI (F-16), Bybit WS, spot e hedge mode
+~~PnL por período e posições consolidadas (F-04, F-05)~~ ✅, página de configurações (✅ Segurança) e gestão de presets (U-04),
+~~404/erro em português, menu mobile~~ ✅, testes de frontend (U-06), Tailwind 4 (G-25), rotação da chave mestra
+(G-29), supply chain com lockfile e digests (G-30), ~~escolha de exchange na UI (F-16)~~ ✅, Bybit WS, spot e hedge mode
 (F-15, F-17, G-10b), revisão de segurança externa (F-19) e critérios objetivos de aumento de capital (F-18).
 
 ## 4. Como reproduzir esta auditoria
