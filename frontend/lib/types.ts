@@ -238,8 +238,49 @@ export interface BacktestRequest {
   end?: string;
   candles_csv?: string;
   use_testnet_data?: boolean;
+  data_source?: "exchange" | "archive";
+  funding?: BacktestFundingOptions;
   config: Partial<BacktestConfig>;
   filters?: BacktestFilters;
+}
+
+export interface BacktestFundingOptions {
+  mode: "auto" | "exchange" | "archive" | "csv" | "constant" | "off";
+  constant_rate?: number;
+  csv?: string;
+}
+
+export interface WalkForwardOptions {
+  folds: number;
+  train_ratio: number;
+  anchored: boolean;
+  objective: "sharpe" | "return_pct" | "profit_factor" | "calmar";
+  min_trades: number;
+}
+
+export interface WalkForwardRequest extends BacktestRequest {
+  param_grid: Record<string, unknown[]>;
+  walk_forward: WalkForwardOptions;
+}
+
+export interface WalkForwardFoldMetrics {
+  return_pct: number;
+  max_drawdown_pct: number;
+  sharpe: number;
+  num_closed_trades: number;
+  win_rate_pct: number;
+  profit_factor: number | null;
+}
+
+export interface WalkForwardFold {
+  index: number;
+  is_start: string;
+  is_end: string;
+  oos_start: string;
+  oos_end: string;
+  best_params: Record<string, unknown>;
+  is: WalkForwardFoldMetrics;
+  oos: WalkForwardFoldMetrics;
 }
 
 export interface BacktestMetrics {
@@ -260,6 +301,16 @@ export interface BacktestMetrics {
   end: string;
   rejections?: Record<string, number>;
   killed_at?: number | null;
+  total_funding?: number;
+  funding_events_applied?: number;
+  // walk-forward / validation runs
+  mode?: "walk_forward" | "validation";
+  folds?: WalkForwardFold[];
+  efficiency?: number | null;
+  param_stability?: number;
+  is_avg_return_pct?: number;
+  oos_avg_return_pct?: number;
+  oos_positive_folds?: number;
 }
 
 export interface BacktestRun {

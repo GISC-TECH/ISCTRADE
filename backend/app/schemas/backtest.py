@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -33,6 +33,15 @@ class BacktestFiltersIn(BaseModel):
     event_pause: EventPauseOptions = Field(default_factory=EventPauseOptions)
 
 
+class FundingOptionsIn(BaseModel):
+    """Funding costs (perpetuals). ``auto``: exchange history (fallback: data.binance.vision archive) when the
+    candles come from the exchange/archive; with ``candles_csv`` only ``csv``/``constant`` apply."""
+
+    mode: Literal["auto", "exchange", "archive", "csv", "constant", "off"] = "auto"
+    constant_rate: float = Field(0.0001, ge=-0.01, le=0.01, description="taxa por 8 h no modo constant")
+    csv: str | None = Field(None, max_length=2_000_000, description="fundingTime,fundingRate")
+
+
 class BacktestRequest(BaseModel):
     strategy_key: str
     params: dict[str, Any] = Field(default_factory=dict)
@@ -42,6 +51,9 @@ class BacktestRequest(BaseModel):
     end: datetime | None = None
     candles_csv: str | None = Field(None, max_length=10_000_000)
     use_testnet_data: bool = False
+    # exchange = REST klines of the configured exchange; archive = data.binance.vision (Binance USDT-M mainnet)
+    data_source: Literal["exchange", "archive"] = "exchange"
+    funding: FundingOptionsIn = Field(default_factory=FundingOptionsIn)
     config: BacktestConfigIn = Field(default_factory=BacktestConfigIn)
     filters: BacktestFiltersIn = Field(default_factory=BacktestFiltersIn)
 
@@ -50,6 +62,22 @@ class BacktestRequest(BaseModel):
         if not self.candles_csv and not (self.start and self.end):
             raise ValueError("informe start/end (dados da Binance) ou candles_csv")
         return self
+
+
+class WalkForwardIn(BaseModel):
+    folds: int = Field(4, ge=1, le=12)
+    train_ratio: float = Field(0.7, ge=0.1, le=0.95)
+    anchored: bool = False
+    objective: Literal["sharpe", "return_pct", "profit_factor", "calmar"] = "sharpe"
+    min_trades: int = Field(1, ge=0, le=1000)
+
+
+class WalkForwardRequest(BacktestRequest):
+    """Walk-forward: ``param_grid`` (name -> values; até 200 combinações) otimizado em cada janela in-sample e
+    validado fora da amostra. Sem grid = validação dos ``params`` informados."""
+
+    param_grid: dict[str, list[Any]] = Field(default_factory=dict)
+    walk_forward: WalkForwardIn = Field(default_factory=WalkForwardIn)
 
 
 class BacktestSummary(BaseModel):

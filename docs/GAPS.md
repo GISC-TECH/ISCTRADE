@@ -119,8 +119,8 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | F-05 | Posições consolidadas | P2 | Parcial — `GET /history/positions` sem `account_id` já agrega o workspace, mas sem rótulo da conta e sem tabela na UI | P | `history.py:list_positions` |
 | F-06 | Alertas no Telegram / e-mail | P2 | ✅ Resolvido — canais `telegram` (Bot API) e `email` (SMTP STARTTLS/SSL) no mesmo pipeline, destinatários por workspace (`telegram_chat_ids`, `emails`, migração `0011`) com padrão do servidor; `docs/ALERTS.md` | M | `services/alerts/telegram.py`, `services/alerts/email.py` |
 | F-07 | TOTP 2FA | P0 | Faltando | M | ver G-22 |
-| F-08 | Funding no backtest | P2 | Faltando (resultados superestimam perpétuos) | M | `STRATEGIES.md` linhas 5/151/168 |
-| F-09 | Walk-forward / out-of-sample | P2 | Faltando | M | `ROADMAP` Fase 1 |
+| F-08 | Funding no backtest | P2 | ✅ Resolvido — `funding.mode` auto/exchange/archive/csv/constant/off; `data_source: archive` (data.binance.vision) | M | `backtest/funding.py`, `backtest/archive.py`; `STRATEGIES.md` §Funding |
+| F-09 | Walk-forward / out-of-sample | P2 | ✅ Resolvido — `POST /strategies/walk-forward` (grid por fold, IS × OOS, curva OOS encadeada, eficiência, estabilidade) | M | `backtest/walkforward.py`; `STRATEGIES.md` §Walk-forward |
 | F-10 | Cache local de klines (TimescaleDB opcional) | P3 | Faltando | M | `backtest/data.py`; `AGENT_GUIDE` Etapa 7 |
 | F-11 | Arquivo histórico de notícias para backtest com filtro | P3 | Faltando | M | `ROADMAP` Fase 1 |
 | F-12 | Alertas de posição ao vivo (além de aberta/fechada) | P1 | Parcial | M | ver G-06 |

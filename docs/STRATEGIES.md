@@ -2,7 +2,7 @@
 
 > [!CAUTION]
 > **Nenhuma estratégia, score ou sinal garante lucro.** Futuros alavancados podem gerar perdas maiores que o
-> capital alocado em um trade. Resultados de backtest são hipotéticos (sem funding, com slippage/taxas
+> capital alocado em um trade. Resultados de backtest são hipotéticos (funding, slippage e taxas
 > estimados, sujeitos a *overfitting*) e **não** indicam resultados futuros. Use paper/Testnet primeiro, compare o
 > paper com o backtest por semanas antes de qualquer conta real, e mantenha os limites de risco conservadores.
 
@@ -147,9 +147,59 @@ stop) e pausa em eventos de alto impacto ligada em todos.
 
 `POST /api/v1/strategies/backtest` (tela **Estratégias & Backtest**) usa a mesma estratégia, o mesmo
 `RiskManager`, taxas e slippage. Cada estratégia técnica tem teste de unidade e um *smoke test* de backtest em
-`backend/tests/test_technical_strategies.py` (clássicas: `backend/tests/test_classic_strategies.py`). Limitações:
-sem custo de funding, preenchimento no fechamento do candle (com slippage), stops intra-candle simulados com *gap*,
-take profit preenchido exatamente no alvo (sem *gap* favorável).
+`backend/tests/test_technical_strategies.py` (clássicas: `backend/tests/test_classic_strategies.py`). Limitações: preenchimento no fechamento do candle (com slippage),
+stops intra-candle simulados com *gap*, take profit preenchido exatamente no alvo (sem *gap* favorável), sem
+profundidade de livro.
+
+### Dados (`data_source`)
+- `exchange` (padrão): klines REST da exchange configurada (mainnet pública ou Testnet).
+- `archive`: arquivo público **data.binance.vision** (Binance USDT-M mainnet; arquivos mensais e, no mês corrente,
+  diários até ontem). Útil quando a REST da mainnet está bloqueada por região (HTTP 451). `app/backtest/archive.py`.
+- `candles_csv`: CSV próprio.
+
+### Funding (`funding.mode`)
+Em cada horário de funding (00/08/16 UTC na Binance) a posição mantida paga/recebe `qty × preço × taxa`
+(comprado paga taxa positiva; vendido recebe), com o preço interpolado entre abertura e fechamento do candle.
+O resultado traz `metrics.total_funding` (negativo = pago) e `funding_events_applied`; a configuração salva informa
+`funding_source` e quantos eventos havia. Modos:
+- `auto` (padrão): histórico da exchange (`/fapi/v1/fundingRate`, paginado); se a REST falhar (ex.: 451), tenta o
+  arquivo `data.binance.vision` (`fundingRate` mensal); sem dados → `funding_source: "unavailable"`. Com
+  `candles_csv`, só aplica funding se vier `funding.csv` (senão `none`).
+- `exchange`, `archive`: força a fonte (erro 502/422 se indisponível).
+- `csv`: `funding.csv` com `fundingTime,fundingRate` (ms/s/ISO) ou o formato do arquivo
+  (`calc_time,funding_interval_hours,last_funding_rate`).
+- `constant`: `funding.constant_rate` a cada 8 h (modelo grosseiro quando não há histórico).
+- `off`.
+
+### Walk-forward / out-of-sample (`POST /api/v1/strategies/walk-forward`)
+Mesmo corpo do backtest + `param_grid` (nome → lista de valores; até 200 combinações) e `walk_forward`
+(`folds` 1–12, `train_ratio` 0,1–0,95, `anchored`, `objective` = `sharpe` \| `return_pct` \| `profit_factor` \|
+`calmar`, `min_trades`). Os dados são divididos em `folds` janelas OOS consecutivas no fim do período, cada uma
+precedida de uma janela in-sample (IS) — deslizante ou ancorada no início. Em cada fold, todas as combinações são
+testadas na IS, a melhor (com pelo menos `min_trades` trades fechados) é aplicada **sem alteração** na OOS. Sem
+`param_grid` vira uma validação dos `params` informados (IS × OOS por fold).
+
+O resultado é salvo como um backtest (`config.mode = "walk_forward"` ou `"validation"`): `metrics` traz o agregado
+**fora da amostra** (curva OOS encadeada com juros compostos: retorno, drawdown, Sharpe, trades, taxas, funding),
+`is_avg_return_pct` × `oos_avg_return_pct`, `oos_positive_folds`, `efficiency` (retorno anualizado OOS / IS:
+≈ 1 robusto, ≪ 1 ou negativo = *overfitting*), `param_stability` (1 = mesmos parâmetros em todos os folds) e
+`metrics.folds` (datas, parâmetros escolhidos, métricas IS e OOS). Cada janela começa zerada com o saldo inicial e
+recebe os candles anteriores só como histórico para os indicadores. Limite de custo:
+`WALK_FORWARD_MAX_CANDLE_STEPS` (padrão 1.000.000 candles simulados ≈ 1 min).
+
+```bash
+curl -sS -X POST https://SEU_DOMINIO/api/v1/strategies/walk-forward -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{
+    "strategy_key": "ema_cross", "symbol": "BTCUSDT", "interval": "1h",
+    "start": "2024-01-01T00:00:00Z", "end": "2024-06-30T23:00:00Z", "data_source": "archive",
+    "param_grid": {"fast": [9, 12, 20], "slow": [26, 50]},
+    "walk_forward": {"folds": 4, "train_ratio": 0.7, "objective": "sharpe"}}'
+```
+
+Exemplo real (BTCUSDT 1h, jan–jun/2024, arquivo data.binance.vision, funding do arquivo): o backtest simples do
+`ema_cross` padrão caiu de +3,75% para +2,73% ao incluir funding (−100 USDT em 414 cobranças); no walk-forward acima
+os folds IS renderam em média +12,7% e os OOS −1,7% (eficiência ≈ 0) — exatamente o tipo de *overfitting* que a
+validação fora da amostra existe para mostrar.
 
 ### Resultados indicativos (out/2026) — NÃO são garantia
 

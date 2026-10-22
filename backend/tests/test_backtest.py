@@ -108,6 +108,8 @@ async def test_backtest_api_fetches_klines_from_mocked_binance(client, db, monke
     rows = [[c.open_time, str(c.open), str(c.high), str(c.low), str(c.close), "1", c.close_time] for c in candles]
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/fapi/v1/fundingRate":
+            return httpx.Response(200, json=[])
         assert request.url.path == "/fapi/v1/klines"
         return httpx.Response(200, json=rows)
 

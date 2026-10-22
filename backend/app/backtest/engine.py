@@ -8,7 +8,10 @@ Execution model (documented assumptions):
   stop price +/- slippage (gaps beyond the stop fill at the candle open if worse).
 - Optional take profits (``OrderIntent.take_profit``) are checked after the stop (if a candle touches both, the
   stop wins: pessimistic) and fill at the take-profit price -/+ slippage (no favourable gap fills).
-- Fees are charged on notional for every fill (taker rate by default). Funding is not modelled.
+- Fees are charged on notional for every fill (taker rate by default).
+- Funding (optional, ``funding=[FundingEvent]``): at each funding timestamp inside a candle the position held at
+  the candle open pays/receives ``qty * price * rate`` (long pays a positive rate), with ``price`` interpolated
+  between the candle open and close. See app/backtest/funding.py for the data sources.
 - One-way net position; leverage only affects the margin check.
 """
 
@@ -22,6 +25,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.backtest.data import interval_ms
+from app.backtest.funding import FundingEvent
 from app.models.enums import OrderSide
 from app.services.news.gate import GateDecision, apply_multiplier
 from app.services.position_math import apply_fill, stop_triggered
@@ -130,8 +134,12 @@ class BacktestEngine:
         interval: str,
         config: BacktestConfig | None = None,
         entry_gate: EntryGate | None = None,
+        funding: list[FundingEvent] | None = None,
     ) -> None:
         self.strategy = strategy
+        self.funding = sorted(funding or [], key=lambda e: e.time)
+        self.funding_total = ZERO  # net funding received (negative = paid)
+        self.funding_applied = 0
         self.entry_gate = entry_gate  # optional news/event filter (same logic as the live bots)
         self.symbol = symbol
         self.interval = interval
@@ -232,16 +240,42 @@ class BacktestEngine:
         return True
 
     # ------------------------------------------------------------------ #
-    def run(self, candles: list[Candle]) -> BacktestResult:
-        if not candles:
+    def _apply_funding(self, candle: Candle, cursor: int) -> int:
+        """Settle every funding event inside ``candle`` on the position held at its open. Returns the new cursor."""
+        events = self.funding
+        while cursor < len(events) and events[cursor].time < candle.open_time:
+            cursor += 1  # before the simulated period
+        while cursor < len(events) and events[cursor].time <= candle.close_time:
+            ev = events[cursor]
+            cursor += 1
+            if not self.qty:
+                continue
+            span = max(candle.close_time - candle.open_time, 1)
+            frac = Decimal(ev.time - candle.open_time) / Decimal(span)
+            o, c = Decimal(str(candle.open)), Decimal(str(candle.close))
+            price = o + (c - o) * frac
+            payment = -self.qty * price * ev.rate
+            self.balance += payment
+            self.funding_total += payment
+            self.funding_applied += 1
+        return cursor
+
+    def run(self, candles: list[Candle], start_index: int = 0) -> BacktestResult:
+        """Simulate ``candles[start_index:]``; earlier candles are history only (indicator warm-up)."""
+        if not candles or start_index >= len(candles):
             raise ValueError("no candles")
         lookback = self.cfg.lookback or max(self.strategy.warmup * 3, 200)
         state: dict[str, Any] = {}
         curve: list[dict[str, Any]] = []
         killed_at: int | None = None
+        fcur = 0
 
-        for i, candle in enumerate(candles):
+        for i in range(start_index, len(candles)):
+            candle = candles[i]
             close = Decimal(str(candle.close))
+            # 0. funding settlements during this candle (position held since the previous close)
+            if self.funding:
+                fcur = self._apply_funding(candle, fcur)
             # 1. protective stop
             if stop_triggered(self.qty, self.stop, Decimal(str(candle.low)), Decimal(str(candle.high))):
                 stop = Decimal(self.stop)  # type: ignore[arg-type]
@@ -296,8 +330,10 @@ class BacktestEngine:
             curve.append({"time": candle.close_time, "equity": float(self.equity(close))})
 
         metrics = compute_metrics(
-            curve, self.trades, self.cfg.initial_balance, self.fees, interval_ms(self.interval), candles
+            curve, self.trades, self.cfg.initial_balance, self.fees, interval_ms(self.interval), candles[start_index:]
         )
+        metrics["total_funding"] = round(float(self.funding_total), 4)
+        metrics["funding_events_applied"] = self.funding_applied
         return BacktestResult(metrics, curve, self.trades, self.rejections, killed_at)
 
     def _ctx(self, candles: list[Candle], i: int, lookback: int, price: Decimal, state: dict) -> StrategyContext:
@@ -381,5 +417,7 @@ def run_backtest(
     interval: str,
     config: BacktestConfig | None = None,
     entry_gate: EntryGate | None = None,
+    funding: list[FundingEvent] | None = None,
+    start_index: int = 0,
 ) -> BacktestResult:
-    return BacktestEngine(strategy, symbol, interval, config, entry_gate).run(candles)
+    return BacktestEngine(strategy, symbol, interval, config, entry_gate, funding).run(candles, start_index)

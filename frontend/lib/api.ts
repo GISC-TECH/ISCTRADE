@@ -12,6 +12,7 @@ import type {
   AssetSentiment,
   AuditEntry,
   BacktestRequest,
+  WalkForwardRequest,
   BacktestRun,
   Bot,
   BotOptions,
@@ -191,6 +192,7 @@ export const api = {
   listStrategies: () => request<StrategyInfo[]>("/strategies/"),
   listPresets: () => request<BotPreset[]>("/strategies/presets"),
   runBacktest: (data: BacktestRequest) => post<BacktestRun>("/strategies/backtest", data),
+  runWalkForward: (data: WalkForwardRequest) => post<BacktestRun>("/strategies/walk-forward", data),
   listBacktests: () => request<BacktestRun[]>("/strategies/backtests"),
   getBacktest: (id: string) => request<BacktestRun>(`/strategies/backtests/${id}`),
 

@@ -18,7 +18,7 @@
 ## Fase 1 — Backtest
 - [x] Download de klines históricos (API pública da Binance) e importação de CSV
 - [x] Motor de backtest com taxas e slippage (stops com *gap*)
-- [ ] Custos de *funding* no backtest
+- [x] Custos de *funding* no backtest (histórico da exchange, arquivo data.binance.vision, CSV ou taxa constante)
 - [x] Estratégias sobre a interface `Strategy` (grid, cruzamento de EMAs, RSI + Bollinger)
 - [x] Estratégias técnicas com stop ATR: RSI reversão, Bollinger reversão/squeeze, Donchian, EMA + ADX e
   Supertrend (trailing ATR) — [STRATEGIES.md](STRATEGIES.md)
@@ -29,7 +29,7 @@
 - [ ] Arquivo histórico de notícias para backtests com filtro em períodos antigos
 - [x] Integrar RiskManager no backtest
 - [x] Relatórios: retorno, drawdown máximo, Sharpe, win rate, profit factor, buy & hold
-- [ ] Testes walk-forward / out-of-sample
+- [x] Testes walk-forward / out-of-sample (`POST /strategies/walk-forward`)
 - [ ] Armazenamento local de klines (cache) para backtests repetidos
 
 ## Fase 2 — Dry-run / Paper trading

@@ -214,6 +214,9 @@ class Settings(BaseSettings):
     EMAIL_FROM: str = ""
     EMAIL_TO: Annotated[list[str], NoDecode] = []  # default recipients
 
+    # Walk-forward budget: total candles simulated per request (grid x folds x window). ~70 µs per candle step.
+    WALK_FORWARD_MAX_CANDLE_STEPS: int = 1_000_000
+
     # Tamper-evident audit trail (app/services/audit_chain.py). Empty key = derived from MASTER_ENCRYPTION_KEY.
     AUDIT_CHAIN_KEY: str = ""
     AUDIT_SEAL_SECONDS: int = 30
