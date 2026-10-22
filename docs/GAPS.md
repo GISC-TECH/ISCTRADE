@@ -73,7 +73,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | G-08 | Sincronização de relógio do host (NTP/chrony) não documentada nem monitorada (há só retry em `-1021`) | Operação | P2 | ✅ **Resolvido** — NTP/chrony no checklist de go-live e incidente 4.10 do `RUNBOOK.md`; alerta `ClockSkew` (node_exporter `node_timex_offset_seconds`) | P | `services/binance_client.py`; docs sem menção a NTP |
 | G-09 | Lock distribuído de tick é *fail-open* quando o Redis cai (pode haver ticks concorrentes) | Execução | P3 | Aceito/Parcial | P | `services/jobs.py:redis_lock` |
 | G-10a | Paper otimista: sem preenchimento parcial/profundidade; LIMIT preenche ao tocar o preço | Paper | P2 | ✅ Resolvido (opcional) — `PAPER_MAX_VOLUME_PCT` (parcial por volume: MARKET expira o resto, LIMIT fica `PARTIALLY_FILLED`), `PAPER_LIMIT_THROUGH_BPS` (LIMIT precisa atravessar), stops dos bots com *gap* (abertura se pior); corrigido também um bug que descartava o preenchimento LIMIT que somava a posição com SL/TP; backtest `config.max_volume_pct`. Sem livro de ofertas real | M | `services/paper_orders.py`, `services/execution.py`; `ARCHITECTURE.md` |
-| G-10b | Hedge mode não suportado (recusado com aviso) | Execução | P3 | Faltando (por decisão) | G | `AUDIT.md` §4 item 3 |
+| G-10b | Hedge mode não suportado (recusado com aviso) | Execução | P3 | Mantido por decisão — recusa explícita continua; motivos e plano de implementação em `HEDGE_MODE.md` | G | `docs/HEDGE_MODE.md`; `AUDIT.md` §4 item 3 |
 
 ### 2.2 Infra, deploy e operação
 
@@ -128,7 +128,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | F-14 | Estratégia de funding (contrarian) | P3 | ✅ Resolvido — `funding_contrarian` (funding extremo + z-score + confirmação EMA, stop ATR); `ctx.funding` alimentado no backtest/walk-forward (sem lookahead) e nos bots (histórico público da exchange) | M | `strategy/funding.py`; `STRATEGIES.md` §Funding contrarian |
 | F-15 | WebSocket da Bybit | P3 | ✅ Resolvido (experimental, `BYBIT_WS_ENABLED=false` por padrão) — streams público (`tickers`/`kline`) e privado (`order`/`execution`/`position`/`wallet`, auth HMAC, ping 20 s) traduzidos para eventos canônicos; testes só com socket simulado, sem validação na Testnet real | G | `exchanges/bybit_ws.py`; `EXCHANGES.md` §Bybit |
 | F-16 | Escolha de exchange no formulário de contas | P3 | ✅ Resolvido — seletor de corretora no formulário (lista de `GET /accounts/exchanges`; experimentais só aparecem se habilitadas, com notas; testnet desabilitado quando não suportado) | P | `frontend/app/dashboard/accounts/page.tsx` |
-| F-17 | Modo spot | P3 | Faltando (só USDT-M) | G | nenhuma referência a spot |
+| F-17 | Modo spot | P3 | Design pronto, não implementado (só USDT-M) — `SPOT.md` (adaptador, OCO como stop, risco long-only, WebSocket API do spot, fases) | G | `docs/SPOT.md` |
 | F-18 | Critérios objetivos de aumento de capital / aumentos graduais | P1 | Faltando (operacional + suporte no app) | M | `ROADMAP` Fase 5 |
 | F-19 | Revisão de segurança externa | P1 | Faltando | — | `ROADMAP` Fase 5 |
 | F-20 | Comparação paper × backtest ≥ 4 semanas | P1 | Faltando (operacional; sem relatório no app) | M | `ROADMAP` Fase 2 |
@@ -197,8 +197,8 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 7. Documentar NTP/chrony e validar `CORS_ORIGINS`/`DOMAIN` no `deploy.sh` (G-08, G-23).
 
 ### Fase C — Confiabilidade e validação de estratégia (≈ 2 semanas)
-1. Funding e walk-forward no backtest (F-08, F-09); relatório paper × backtest (F-20).
-2. Paper com parciais/profundidade (F-13); riscos com taxas e slippage do stop (G-05).
+1. ~~Funding e walk-forward no backtest (F-08, F-09)~~ ✅; relatório paper × backtest (F-20).
+2. ~~Paper com parciais (F-13)~~ ✅ (opcional; sem livro de ofertas real); riscos com taxas e slippage do stop (G-05).
 3. Testes de integração com Postgres+Redis+Celery reais e testnet (G-21); cobrir `streams.py`, `prices.py`, tasks (B-01).
 4. Auditoria com hash encadeado (G-26); Telegram/e-mail (F-06); reset de senha e sessões (G-28).
 5. ~~Nota regulatória e tributária no README/UI e exportação CSV (D-01, D-02).~~ ✅ feito.
@@ -206,8 +206,8 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 ### Fase D — Produto e escala (contínuo)
 ~~PnL por período e posições consolidadas (F-04, F-05)~~ ✅, página de configurações (✅ Segurança) e gestão de presets (U-04),
 ~~404/erro em português, menu mobile~~ ✅, testes de frontend (U-06), Tailwind 4 (G-25), rotação da chave mestra
-(G-29), supply chain com lockfile e digests (G-30), ~~escolha de exchange na UI (F-16)~~ ✅, Bybit WS, spot e hedge mode
-(F-15, F-17, G-10b), revisão de segurança externa (F-19) e critérios objetivos de aumento de capital (F-18).
+(G-29), supply chain com lockfile e digests (G-30), ~~escolha de exchange na UI (F-16)~~ ✅, ~~Bybit WS (F-15)~~ ✅ experimental, spot (F-17: só design em
+`SPOT.md`) e hedge mode (G-10b: recusa mantida, `HEDGE_MODE.md`), revisão de segurança externa (F-19) e critérios objetivos de aumento de capital (F-18).
 
 ## 4. Como reproduzir esta auditoria
 

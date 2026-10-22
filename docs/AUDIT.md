@@ -74,7 +74,7 @@ Legenda de status: **Corrigido** (com testes, em `main`) · **Pendente** (docume
 
 1. Migrar Tailwind 3 → 4 para eliminar os avisos de build do item 24.
 2. Revisar o uso do provedor WAGO para WhatsApp (terceiro recebe o texto dos alertas) — preferir Meta Cloud API ou gateway próprio.
-3. Se houver demanda, suportar hedge mode de fato (`positionSide` em ordens, posições por lado no reconciliador).
+3. Se houver demanda, suportar hedge mode de fato (`positionSide` em ordens, posições por lado no reconciliador). Decisão e plano: [HEDGE_MODE.md](HEDGE_MODE.md).
 4. Opcional: restringir hosts das URLs de feed (lista permitida) para eliminar o SSRF residual via configuração.
 
 ## 5. Desempenho (latência e throughput)

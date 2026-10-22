@@ -162,7 +162,7 @@ O workflow em [`docs/ci/ci.yml`](docs/ci/ci.yml) (**inativo até ser copiado** p
 
 ## Documentação
 
-- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) (go-live, incidentes, backups, monitor externo) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/ALERTS.md`](docs/ALERTS.md) (alertas via WhatsApp) · [`docs/STRATEGIES.md`](docs/STRATEGIES.md) (estratégias e scanner) · [`docs/NEWS.md`](docs/NEWS.md) (notícias, sentimento e calendário) · [`docs/REALTIME.md`](docs/REALTIME.md) (painel em tempo real e trading manual) · [`docs/EXCHANGES.md`](docs/EXCHANGES.md) (adaptadores de exchange, viabilidade e prioridades)
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) (go-live, incidentes, backups, monitor externo) · [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/SECURITY.md`](docs/SECURITY.md) · [`docs/ROADMAP.md`](docs/ROADMAP.md) · [`docs/ALERTS.md`](docs/ALERTS.md) (alertas via WhatsApp, Telegram e e-mail) · [`docs/STRATEGIES.md`](docs/STRATEGIES.md) (estratégias e scanner) · [`docs/NEWS.md`](docs/NEWS.md) (notícias, sentimento e calendário) · [`docs/REALTIME.md`](docs/REALTIME.md) (painel em tempo real e trading manual) · [`docs/EXCHANGES.md`](docs/EXCHANGES.md) (adaptadores de exchange, viabilidade e prioridades) · [`docs/SPOT.md`](docs/SPOT.md) (design do modo spot) · [`docs/HEDGE_MODE.md`](docs/HEDGE_MODE.md) (por que hedge mode é recusado)
 - [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) — guia para usar agentes de IA (Claude Code, Cursor, Copilot, Aider) e prompts para as etapas restantes; regras em [`AGENTS.md`](AGENTS.md)
 
 ## Segurança
