@@ -88,7 +88,7 @@ async def test_production_signup_never_bootstraps_admin(client, db, monkeypatch)
 
     assert "criado" in await create_admin("Owner@Example.com", "Dono", PW, promote=False)
     r = await _register(client, "second@example.com")
-    assert r.status_code == 201 and r.json()["role"] == "trader"
+    assert r.status_code == 201 and r.json()["user"]["role"] == "trader"
     owner = await db.scalar(select(User).where(User.email == "owner@example.com"))
     assert owner.role == Role.ADMIN and owner.active_workspace_id
     assert await db.get(Workspace, owner.active_workspace_id)
@@ -111,7 +111,7 @@ async def test_invite_only_flow(client, db, monkeypatch) -> None:
     assert bound["status"] == "pending" and bound["registration_mode"] == "invite"
     assert (await _register(client, "other@example.com", bound["token"])).status_code == 403  # wrong e-mail
     r = await _register(client, "bound@example.com", bound["token"])
-    assert r.status_code == 201 and r.json()["role"] == "trader"
+    assert r.status_code == 201 and r.json()["user"]["role"] == "trader"
     assert (await _register(client, "bound2@example.com", bound["token"])).status_code == 403  # single use
 
     from app.core import rate_limiting

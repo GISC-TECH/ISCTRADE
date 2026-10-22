@@ -42,7 +42,11 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     setError(null);
     setLoading(true);
     try {
-      if (!isLogin) await api.register(email, password, fullName || undefined);
+      if (!isLogin) {
+        // Registration signs in immediately (same cookies as login): go straight to the dashboard.
+        finish(await api.register(email, password, fullName || undefined));
+        return;
+      }
       const res = await api.login(email, password);
       if ("mfa_required" in res && res.mfa_required) {
         setMfaToken(res.mfa_token);

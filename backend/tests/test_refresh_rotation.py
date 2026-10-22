@@ -44,7 +44,12 @@ async def test_rotation_and_reuse_revokes_family(client, db) -> None:
     assert stolen.status_code == 401
     assert (await _use(client, t2)).status_code == 401  # the legitimate chain is revoked as well
     rows = (await db.scalars(select(RefreshToken))).all()
-    assert rows and all(r.revoked_at is not None for r in rows)
+    family = {r.family_id for r in rows if r.used_at is not None}
+    assert len(family) == 1
+    chain = [r for r in rows if r.family_id in family]
+    assert len(chain) >= 2 and all(r.revoked_at is not None for r in chain)
+    # the session opened by the sign-up itself (auto-login) is another family and stays valid
+    assert any(r.revoked_at is None for r in rows if r.family_id not in family)
 
 
 async def test_concurrent_refresh_within_grace_is_allowed(client) -> None:

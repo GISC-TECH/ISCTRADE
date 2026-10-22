@@ -121,12 +121,16 @@ async def registration_info() -> dict:
 
 @router.post(
     "/register",
-    response_model=UserRead,
+    response_model=TokenResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(rate_limiter(settings.REGISTER_RATE_LIMIT_PER_MINUTE, scope="register"))],
 )
-async def register(data: UserCreate, request: Request, db: AsyncSession = Depends(get_db)) -> User:
-    """Self-service signup per REGISTRATION_MODE (closed / invite / open); see app.services.registration."""
+async def register(
+    data: UserCreate, request: Request, response: Response, db: AsyncSession = Depends(get_db)
+) -> TokenResponse:
+    """Self-service signup per REGISTRATION_MODE (closed / invite / open); see app.services.registration.
+    On success the user is signed in right away (same cookies/body as ``/auth/login``). A brand-new user has no 2FA
+    yet; if the 2FA policy requires it, ``user.mfa_required`` tells the UI to open the enrolment page."""
     try:
         user, invite = await register_user(
             db, email=data.email, password=data.password, full_name=data.full_name, invite_token=data.invite_token
@@ -144,7 +148,7 @@ async def register(data: UserCreate, request: Request, db: AsyncSession = Depend
     )  # fmt: skip
     await db.commit()
     await db.refresh(user)
-    return user
+    return await issue_tokens(response, user, db)
 
 
 @router.post(

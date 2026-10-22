@@ -267,3 +267,16 @@ async def test_live_mode_requires_workspace_admin_and_server_flag(client) -> Non
     r = await client.post("/api/v1/accounts/", json=body, headers=h)
     assert r.status_code == 201 and r.json()["execution_mode"] == ExecutionMode.LIVE.value
     assert (await client.post(f"/api/v1/accounts/{r.json()['id']}/start", headers=h)).status_code == 409
+
+
+async def test_register_signs_in_immediately(client) -> None:
+    r = await client.post("/api/v1/auth/register", json={"email": "auto@example.com", "password": PW})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["access_token"] and body["user"]["email"] == "auto@example.com"
+    assert body["user"]["active_workspace_id"]
+    # cookies set by the register response authenticate the next request (no separate login)
+    me = await client.get("/api/v1/auth/me")
+    assert me.status_code == 200 and me.json()["email"] == "auto@example.com"
+    # refresh token from registration is a normal single-use one
+    assert (await client.post("/api/v1/auth/refresh")).status_code == 200
