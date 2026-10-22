@@ -204,7 +204,8 @@ async def _setup_members(client):
     return superadmin, {**ws_owner, "X-Workspace-ID": ws_id}, {**trader, "X-Workspace-ID": ws_id}, ws_id
 
 
-async def test_risk_limits_api_permissions(client) -> None:
+async def test_risk_limits_api_permissions(client, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "TOTP_REQUIRED_FOR_ADMINS", False)  # 2FA is covered by tests/test_mfa.py
     superadmin, owner, trader, ws_id = await _setup_members(client)
     r = await client.get("/api/v1/risk/limits", headers=trader)
     assert r.status_code == 200
