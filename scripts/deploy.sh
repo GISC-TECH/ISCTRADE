@@ -92,6 +92,17 @@ check_redis() { # G-27: Redis sempre com senha (ACL em infra/redis/entrypoint.sh
   done
 }
 
+check_registration() { # G-03b: o backend recusa subir em produção com cadastro aberto; falhe antes do deploy
+  local mode
+  mode="$(env_value REGISTRATION_MODE | tr '[:upper:]' '[:lower:]')"
+  if [[ -z "$mode" ]]; then
+    if [[ "$(env_value ALLOW_REGISTRATION | tr '[:upper:]' '[:lower:]')" =~ ^(true|1|yes|on)$ ]]; then mode=open; else mode=closed; fi
+  fi
+  if [[ "$mode" == "open" && ! "$(env_value ALLOW_OPEN_REGISTRATION_IN_PRODUCTION | tr '[:upper:]' '[:lower:]')" =~ ^(true|1|yes|on)$ ]]; then
+    die "cadastro aberto (REGISTRATION_MODE=open / ALLOW_REGISTRATION=true): use REGISTRATION_MODE=invite ou closed e crie o admin com 'python -m app.cli create-admin'."
+  fi
+}
+
 check_key_rotation() { # G-29: chaves antigas válidas e cadeia de auditoria fixada durante a rotação
   local prev key
   prev="$(env_value MASTER_ENCRYPTION_KEYS_PREVIOUS)"
@@ -121,6 +132,7 @@ preflight() {
   fi
   check_redis
   check_key_rotation
+  check_registration
   if [[ "$(env_value LIVE_TRADING_ENABLED)" == "true" ]]; then
     printf '\033[1;33mATENÇÃO:\033[0m LIVE_TRADING_ENABLED=true — contas em modo "live" enviarão ORDENS REAIS.\n'
   else
