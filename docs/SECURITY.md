@@ -27,6 +27,22 @@
 - Ordens reais exigem **duas** travas: `LIVE_TRADING_ENABLED=true` no servidor **e** `execution_mode=live` na conta. Com qualquer uma desligada, o executor de paper é usado.
 - Toda ordem passa pelo `RiskManager`: kill switch por drawdown, perda diária, stop loss obrigatório, alavancagem máxima, risco por trade e margem disponível. Ordens *reduce-only* são sempre permitidas para que posições possam ser encerradas.
 - Ordens reais são acompanhadas de um `STOP_MARKET` *reduce-only* de proteção.
+- **Garantia de stop** (G-01): o reconciliador (a cada `RECONCILE_SECONDS`, na partida do worker e em eventos do user
+  stream) confere se cada posição live tem stop de proteção na corretora (incl. Algo Orders). Se faltar, recoloca o
+  stop salvo (ou do histórico de ordens) ou um stop de emergência ATR/% limitado pela liquidação; stop já cruzado →
+  fechamento a mercado *reduce-only*. Posições abertas fora da plataforma são adotadas com stop de emergência ou só
+  alertadas (`PROTECTION_ADOPT_EXTERNAL`). Sem conseguir proteger: alerta crítico "posição desprotegida", evento
+  `position.unprotected` e métrica `btp_positions_unprotected` (regra Prometheus `UnprotectedPosition`).
+- **Limites agregados** (G-02): notional total, perda diária em USDT e nº de posições por workspace e globais
+  (`RISK_WS_*`, `RISK_GLOBAL_*`, `/api/v1/risk/limits`; trader só aperta, admin do workspace afrouxa até o padrão do
+  servidor, super-admin além) e teto rígido de capital por conta live (`max_capital_usdt`,
+  `RISK_LIVE_ACCOUNT_MAX_CAPITAL_USDT`), aplicados a bots e ordens manuais.
+- **Liquidação e alavancagem** (G-04): stop rejeitado se estiver além de `RISK_STOP_MAX_LIQ_DISTANCE_RATIO` da distância
+  até o preço de liquidação estimado (brackets da corretora); alavancagem limitada pelo bracket e por
+  `RISK_MAX_LEVERAGE_CAP` (padrão 20, teto rígido 50).
+- **Kill switch e transferências** (G-03): pico e base diária de patrimônio descontam depósitos/saques (histórico
+  `TRANSFER`), então saque não dispara o kill switch e depósito não mascara perda.
+- Alertas de posição aberta (PnL, perto do stop, perto da liquidação) para live e paper — [ALERTS.md](ALERTS.md).
 - **Kill switch por conta**: drawdown acima do limite muda a conta para `killed`, para os bots e (com `KILL_SWITCH_CLOSE_POSITIONS=true`) encerra as posições. Só um admin do workspace pode resetar.
 - **Kill switch global** (super-admin, painel Admin): bloqueia novas ordens de abertura em todas as contas.
 - **Trading manual** (`/api/v1/trading/*`, papel `trader`/`admin`): mesmo pipeline dos bots (kill switches →

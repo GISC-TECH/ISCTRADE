@@ -15,15 +15,18 @@ real estão em **controles operacionais e de risco no nível da conta/instância
 
 1. **Não há garantia contínua de que toda posição live tem stop na corretora** — o reconciliador sincroniza
    posições/ordens, mas não verifica nem recoloca o stop de proteção, nem alerta "posição sem stop".
+   ✅ *Resolvido (G-01).*
 2. **Cadastro aberto por padrão em produção** (`ALLOW_REGISTRATION=true`): quem acessar o domínio antes do dono vira
    super-admin; depois disso qualquer pessoa ainda cria conta e workspace próprio (verificado: 2º cadastro → 201).
-3. **Sem 2FA** e **sem limites agregados / teto rígido de capital** por workspace ou instância.
+   ✅ *Resolvido (G-03b, G-17): cadastro fechado por padrão, convites, produção recusa cadastro aberto, CLI create-admin.*
+3. **Sem 2FA** e **sem limites agregados / teto rígido de capital** por workspace ou instância. ✅ *Resolvidos (G-22, G-02).*
 4. **CI inativo**: nada impede um commit quebrado de chegar em `main` (e no `deploy.sh`, que faz `git pull`).
 5. **Observabilidade incompleta para operação desassistida**: `/health/ready` não enxerga o beat nem a conexão real
    dos WebSockets, não há regras de alerta no Prometheus nem *dead man's switch*, e o container `streams` fica
    permanentemente `unhealthy` (bug confirmado).
 6. **Backups só locais**, sem agendamento, cópia externa, criptografia ou teste periódico de restauração.
 7. **Kill switch por drawdown é distorcido por depósitos/saques** (pico de patrimônio não considera transferências).
+   ✅ *Resolvido (G-03).*
 
 Funcionalidades prometidas ainda ausentes: trilha de auditoria imutável, Telegram/e-mail, TOTP, PnL por período,
 posições consolidadas na UI, funding e walk-forward no backtest, estratégia de funding, parciais no paper, WebSocket
@@ -41,7 +44,7 @@ Estimativa para chegar a "conta real mínima" com segurança (Fases A+B abaixo):
 | `scripts/deploy.sh --no-pull` | **OK** (concluiu; smoke test falhou só porque a porta 443 foi remapeada nesta auditoria) |
 | `scripts/backup_db.sh` + restauração em banco novo | **OK** (usuários e `alembic_version=0008` restaurados) |
 | Caddy: HTTPS (cert interno), HSTS/CSP/XFO/Permissions-Policy, `/metrics` 404, `/docs` 404 em prod, HTTP→HTTPS 308 | **OK** |
-| Primeiro cadastro vira super-admin; 2º cadastro aceito com `ALLOW_REGISTRATION=true` em produção | **Confirmado** (G-03b) |
+| Primeiro cadastro vira super-admin; 2º cadastro aceito com `ALLOW_REGISTRATION=true` em produção | **Confirmado** (G-03b) — ✅ corrigido |
 | WebSocket `/api/v1/ws` via Caddy | **OK** quando a origem está em `CORS_ORIGINS`; **403** caso contrário (G-23) |
 | `pytest --cov` | **377 passed, 1 skipped**; cobertura **87%** (padrão) / **90%** (com `concurrency=greenlet,thread`, medição correta para SQLAlchemy async) |
 | `ruff check` / `ruff format --check` | limpos |
@@ -63,12 +66,12 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 
 | ID | Item | Área | Prio | Status | Esforço | Evidência / arquivo |
 |---|---|---|---|---|---|---|
-| G-01 | Garantia contínua de stop na corretora: o reconciliador não verifica se cada posição live tem `STOP_MARKET` (Algo Order) ativo, não recoloca stop cancelado/expirado e adota posições abertas fora da plataforma sem stop; sem alerta "posição desprotegida" | Risco/Reconciliação | **P0** | Faltando | M | `services/reconciler.py` (`run`, `ACCOUNT_UPDATE` só ajusta qty/preço) |
-| G-02 | Limites agregados por workspace/instância (notional total, perda diária em USDT, nº máx. de posições) e **teto rígido de capital/notional para contas live** | Risco | **P0** | Faltando | M | `services/risk_manager.py` (só por conta); `docs/AGENT_GUIDE.md` Etapas 5 e 9; `ROADMAP` Fase 5 |
-| G-03 | Kill switch de drawdown e perda diária distorcidos por depósitos/saques: `peak_equity`/`day_start_equity` não descontam transferências (saque dispara kill switch; depósito mascara perda) | Risco | P1 | Faltando | M | `RiskManager.from_account`; nenhum tratamento de `TRANSFER` em `services/` |
-| G-04 | Stop vs. preço de liquidação não é validado; `max_leverage` aceita até 125x por conta | Risco | P1 | Faltando | P | `schemas/account.py` (`le=125`); nenhum uso de `liquidationPrice` no RiskManager |
+| G-01 | Garantia contínua de stop na corretora: o reconciliador não verifica se cada posição live tem `STOP_MARKET` (Algo Order) ativo, não recoloca stop cancelado/expirado e adota posições abertas fora da plataforma sem stop; sem alerta "posição desprotegida" | Risco/Reconciliação | **P0** | ✅ **Resolvido** — guarda de stop no reconciliador (`services/protection.py`; a cada `RECONCILE_SECONDS`, no start do worker e em eventos do user stream): verifica stop de proteção na corretora (incl. Algo Orders) para cada posição live, recoloca a partir do stop salvo/histórico ou stop de emergência ATR/% (limitado pela liquidação), fecha a mercado se o stop já foi cruzado, adota posições externas (`PROTECTION_ADOPT_EXTERNAL=stop|alert`); alerta crítico `position_unprotected` + métrica `btp_positions_unprotected{account_id,workspace_id,symbol}`; recuperação após restart (reconciliação no `worker_ready`, bots `starting` re-preparados) | M | `services/reconciler.py` (`run`, `ACCOUNT_UPDATE` só ajusta qty/preço) |
+| G-02 | Limites agregados por workspace/instância (notional total, perda diária em USDT, nº máx. de posições) e **teto rígido de capital/notional para contas live** | Risco | **P0** | ✅ **Resolvido** — `RiskManager.evaluate_aggregate` (bots e ordens manuais): notional total, perda diária em USDT e nº de posições por workspace e global (live e paper separados), `RISK_WS_*`/`RISK_GLOBAL_*` + `/api/v1/risk/limits` (trader só aperta; admin do workspace afrouxa até o padrão do servidor; super-admin acima); teto rígido de capital por conta live (`max_capital_usdt`, `RISK_LIVE_ACCOUNT_MAX_CAPITAL_USDT`) limita o equity usado no dimensionamento | M | `services/risk_manager.py` (só por conta); `docs/AGENT_GUIDE.md` Etapas 5 e 9; `ROADMAP` Fase 5 |
+| G-03 | Kill switch de drawdown e perda diária distorcidos por depósitos/saques: `peak_equity`/`day_start_equity` não descontam transferências (saque dispara kill switch; depósito mascara perda) | Risco | P1 | ✅ **Resolvido** — `equity.sync_transfers` lê o histórico `TRANSFER` (income) e ajusta `peak_equity`/`day_start_equity` (saque não dispara o kill switch; depósito não mascara perda); sincronizado antes de rolar as bases e ao cruzar limiares (`TRANSFER_SYNC_SECONDS`, `TRANSFER_ASSETS`) | M | `RiskManager.from_account`; nenhum tratamento de `TRANSFER` em `services/` |
+| G-04 | Stop vs. preço de liquidação não é validado; `max_leverage` aceita até 125x por conta | Risco | P1 | ✅ **Resolvido** — stop validado contra o preço de liquidação estimado (brackets de alavancagem/margem de manutenção da corretora; `RISK_STOP_MAX_LIQ_DISTANCE_RATIO`), alavancagem limitada por bracket e por `RISK_MAX_LEVERAGE_CAP` (padrão 20, teto rígido 50 nos schemas) | P | `schemas/account.py` (`le=125`); nenhum uso de `liquidationPrice` no RiskManager |
 | G-05 | Risco por trade ignora taxas e slippage/gap do stop a mercado; sem limite de concentração por símbolo/correlação nem limite de ordens por minuto | Risco | P2 | Faltando | M | `RiskManager.trade_risk` |
-| G-06 | Alertas de posição ao vivo: só "aberta/fechada"; faltam PnL/limiar, proximidade do stop/liquidação, posição sem stop, divergência de preço | Alertas | P1 | Parcial | M | `services/alerts/events.py` |
+| G-06 | Alertas de posição ao vivo: só "aberta/fechada"; faltam PnL/limiar, proximidade do stop/liquidação, posição sem stop, divergência de preço | Alertas | P1 | ✅ **Resolvido** — `services/position_alerts.py`: limiares de PnL (ROE % e USDT), proximidade do stop e da liquidação (live: `liquidationPrice` da corretora; paper: estimativa), live e paper, com antispam por posição/limiar (`POSITION_ALERT_*`); posição sem stop coberta por G-01 | M | `services/alerts/events.py` |
 | G-07 | Kill switch nunca testado em produção; runbook de go-live e de incidente incompleto (rascunho em SECURITY.md) | Operação | P1 | ✅ **Resolvido** — `docs/RUNBOOK.md` (go-live, incidentes 4.1–4.12, *drill* do kill switch global e por conta com o comportamento real, perda do servidor, rotação de segredos). O *drill* em produção continua sendo um passo do go-live a executar pelo operador | P | `ROADMAP` Fase 3; `docs/SECURITY.md` §runbook |
 | G-08 | Sincronização de relógio do host (NTP/chrony) não documentada nem monitorada (há só retry em `-1021`) | Operação | P2 | ✅ **Resolvido** — NTP/chrony no checklist de go-live e incidente 4.10 do `RUNBOOK.md`; alerta `ClockSkew` (node_exporter `node_timex_offset_seconds`) | P | `services/binance_client.py`; docs sem menção a NTP |
 | G-09 | Lock distribuído de tick é *fail-open* quando o Redis cai (pode haver ticks concorrentes) | Execução | P3 | Aceito/Parcial | P | `services/jobs.py:redis_lock` |
@@ -86,7 +89,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | G-14 | Sem rotação de logs do Docker (`json-file` sem `max-size`) nem limites de CPU/memória → risco de disco cheio | Docker | P2 | ✅ **Resolvido** — âncora `x-logging` (`json-file`, `LOG_MAX_SIZE`/`LOG_MAX_FILE`) e `mem_limit` em todos os serviços; alertas `DiskSpaceLow/Critical` | P | `docker-compose*.yml` (sem `logging:`/`deploy.resources`) |
 | G-15 | Sem retenção para `refresh_tokens` (cresce a cada refresh), `audit_logs`, `alerts`, `equity_snapshots`, ordens/trades | Banco | P2 | ✅ **Resolvido** — tarefa diária `ops.cleanup` (`RETENTION_*_DAYS`): `refresh_tokens` expirados, `alerts`, `equity_snapshots`, `backtest_runs` e (opcional, padrão desligado) `audit_logs` — remoção de prefixo compatível com a cadeia de hash (G-26). Ordens/trades são mantidos (histórico fiscal) | P | só scanner e notícias têm *prune* |
 | G-16 | `deploy.sh`: smoke test fixo na 443, não espera `streams`/`celery_beat`, rollback não restaura banco (apenas avisa), exige `docker` sem sudo | Deploy | P3 | ✅ **Resolvido** — smoke test em `HTTPS_PORT` com leitura do status, espera todos os serviços (incl. `streams`/`celery_beat`), valida `CORS_ORIGINS`, rollback imprime o comando `restore_db.sh --replace` do backup pré-deploy, `DOCKER="sudo docker"` suportado | P | `scripts/deploy.sh` |
-| G-17 | Bootstrap do admin depende de ser o primeiro a se cadastrar (corrida entre cadastros simultâneos; contagem sem lock); sem CLI `create-admin` | Bootstrap | P1 | Parcial | P | `api/v1/endpoints/auth.py:register` |
+| G-17 | Bootstrap do admin depende de ser o primeiro a se cadastrar (corrida entre cadastros simultâneos; contagem sem lock); sem CLI `create-admin` | Bootstrap | P1 | ✅ **Resolvido** — CLI `python -m app.cli create-admin` (senha por prompt/stdin/`BTP_ADMIN_PASSWORD`; `--promote`), `create-invite`, `registration-status`; em produção o cadastro nunca concede super-admin e é recusado sem usuários (sem corrida) | P | `api/v1/endpoints/auth.py:register` |
 | G-18 | Nomes fixos de redes/volumes (`btp_*`) impedem staging e produção no mesmo host | Docker | P3 | ✅ **Resolvido** — redes/volumes/imagens prefixados por `STACK_NAME` e portas parametrizadas (staging + produção no mesmo host) | P | `docker-compose.yml` |
 | G-19 | Grafana com fallback de senha `admin`; `GRAFANA_ADMIN_USER` ausente do `.env.example` | Config | P3 | ✅ **Resolvido** — `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` no `.env.example`; `deploy.sh` recusa subir o perfil `monitoring` com senha `admin` | P | `docker-compose.yml` |
 | G-20 | Variáveis em `config.py` ausentes do `.env.example`: `NEWS_HTTP_TIMEOUT_SECONDS`, `NEWS_MAX_ITEMS_PER_SOURCE`, `X_API_URL` (demais completas) | Config | P3 | ✅ **Resolvido** — variáveis adicionadas ao `.env.example` | P | `core/config.py` × `.env.example` |
@@ -96,7 +99,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 
 | ID | Item | Área | Prio | Status | Esforço | Evidência / arquivo |
 |---|---|---|---|---|---|---|
-| G-03b | `ALLOW_REGISTRATION=true` aceito em produção: qualquer visitante cria usuário + workspace (e, sendo admin do próprio workspace, pode pôr conta em `live` se `LIVE_TRADING_ENABLED=true`) | Auth | **P0** | **Confirmado** | P | `core/config.py:production_problems`, `.env.example` |
+| G-03b | `ALLOW_REGISTRATION=true` aceito em produção: qualquer visitante cria usuário + workspace (e, sendo admin do próprio workspace, pode pôr conta em `live` se `LIVE_TRADING_ENABLED=true`) | Auth | **P0** | ✅ **Resolvido** — `REGISTRATION_MODE=closed|invite|open` (padrão fechado); produção recusa iniciar com cadastro aberto sem `ALLOW_OPEN_REGISTRATION_IN_PRODUCTION=true`; convites de uso único (só SHA-256, vínculo opcional a e-mail, expiração, revogação; `/api/v1/admin/invites`) | P | `core/config.py:production_problems`, `.env.example` |
 | G-22 | Sem 2FA (TOTP) no login | Auth | **P0** | ✅ **Resolvido** — TOTP (RFC 6238) com QR, segredo cifrado AES-GCM, anti-replay, 10 códigos de recuperação com hash, login em duas etapas (`/auth/login/2fa`), limite de tentativas por usuário, desativação com senha + código; obrigatório para super-admin (`/admin`) e para quem opera contas live, política opcional "2FA para todos" e reset pelo admin (migração `0010`; `SECURITY.md` §2FA; página **Segurança**) | M | `ROADMAP` Fase 5; `SECURITY.md` |
 | G-23 | `CORS_ORIGINS` precisa conter `https://<DOMAIN>`, senão o WebSocket é recusado (403) e o painel fica em "Reconectando…"; `.env.example` traz só localhost e o `deploy.sh` não valida | Config/Realtime | P2 | ✅ **Resolvido** — `.env.example` documenta; `deploy.sh` aborta se `CORS_ORIGINS` não contém `https://$DOMAIN`; WS registra "websocket origin rejected" no log | P | `realtime_ws.py` (checagem de Origin); verificado |
 | G-24 | `orjson 3.11.5` com PYSEC-2026-107 (o AUDIT.md diz "pip-audit limpo") | Dependências | P2 | ✅ **Resolvido** — `orjson==3.11.9`; `pip-audit` limpo; CI roda `pip-audit` | P | `backend/requirements.txt` |
@@ -114,7 +117,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 |---|---|---|---|---|---|
 | F-01 | CI (lint + testes + build) | **P0** | **Parcial** — workflow completo e testado localmente em `docs/ci/ci.yml` (+ `pip-audit`, `npm audit`, `promtool`/`amtool`, shellcheck dos scripts de backup, build da imagem de backup); **ativação** exige token com escopo `workflow` (passos em `docs/ci/README.md`) | P | `docs/ci/ci.yml`; `ROADMAP` Fase 0 |
 | F-02 | Auditoria à prova de adulteração (hash chain) | P2 | ✅ Resolvido | M | ver G-26 |
-| F-03 | Limites de risco agregados por workspace | P0 | Faltando | M | ver G-02 |
+| F-03 | Limites de risco agregados por workspace | P0 | ✅ **Resolvido** (G-02) | M | ver G-02 |
 | F-04 | PnL por período (`/history/pnl`, gráfico 30 dias) | P2 | ✅ Resolvido — `GET /history/pnl` (dia/semana/mês, agrupado por conta/bot/estratégia/símbolo, taxas USD separadas) e página **PnL & relatórios** com barras empilhadas + PnL acumulado | M | `history.py` não tem a rota; `AGENT_GUIDE` Etapa 6 |
 | F-05 | Posições consolidadas | P2 | ✅ Resolvido — página **Posições** (todas as contas do workspace, rótulo da conta, filtro paper/live, nocional, PnL não realizado, posições sem stop, atualização em tempo real) | P | `history.py:list_positions` |
 | F-06 | Alertas no Telegram / e-mail | P2 | ✅ Resolvido — canais `telegram` (Bot API) e `email` (SMTP STARTTLS/SSL) no mesmo pipeline, destinatários por workspace (`telegram_chat_ids`, `emails`, migração `0011`) com padrão do servidor; `docs/ALERTS.md` | M | `services/alerts/telegram.py`, `services/alerts/email.py` |
@@ -123,7 +126,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 | F-09 | Walk-forward / out-of-sample | P2 | ✅ Resolvido — `POST /strategies/walk-forward` (grid por fold, IS × OOS, curva OOS encadeada, eficiência, estabilidade) | M | `backtest/walkforward.py`; `STRATEGIES.md` §Walk-forward |
 | F-10 | Cache local de klines (TimescaleDB opcional) | P3 | Faltando | M | `backtest/data.py`; `AGENT_GUIDE` Etapa 7 |
 | F-11 | Arquivo histórico de notícias para backtest com filtro | P3 | Faltando | M | `ROADMAP` Fase 1 |
-| F-12 | Alertas de posição ao vivo (além de aberta/fechada) | P1 | Parcial | M | ver G-06 |
+| F-12 | Alertas de posição ao vivo (além de aberta/fechada) | P1 | ✅ **Resolvido** (G-06) | M | ver G-06 |
 | F-13 | Paper com preenchimento parcial | P2 | ✅ Resolvido (opcional, ver G-10a) | M | ver G-10a |
 | F-14 | Estratégia de funding (contrarian) | P3 | ✅ Resolvido — `funding_contrarian` (funding extremo + z-score + confirmação EMA, stop ATR); `ctx.funding` alimentado no backtest/walk-forward (sem lookahead) e nos bots (histórico público da exchange) | M | `strategy/funding.py`; `STRATEGIES.md` §Funding contrarian |
 | F-15 | WebSocket da Bybit | P3 | ✅ Resolvido (experimental, `BYBIT_WS_ENABLED=false` por padrão) — streams público (`tickers`/`kline`) e privado (`order`/`execution`/`position`/`wallet`, auth HMAC, ping 20 s) traduzidos para eventos canônicos; testes só com socket simulado, sem validação na Testnet real | G | `exchanges/bybit_ws.py`; `EXCHANGES.md` §Bybit |
@@ -176,14 +179,14 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 
 ### Fase A — Bloqueios para dinheiro real (≈ 1,5–2 semanas)
 1. **Ativar o CI** (F-01) e acrescentar `pip-audit`, `npm audit --omit=dev`, `gitleaks` e limiar de cobertura (G-30, B-02).
-2. **Fechar cadastro e bootstrap** (G-03b, G-17): `ALLOW_REGISTRATION=false` por padrão; em produção bloquear o start se
+2. ✅ **Fechar cadastro e bootstrap** (G-03b, G-17) — feito (`REGISTRATION_MODE`, convites, CLI): `ALLOW_REGISTRATION=false` por padrão; em produção bloquear o start se
    estiver `true` sem `ADMIN_BOOTSTRAP_TOKEN`; CLI `python -m app.cli create-admin`.
 3. ~~**TOTP 2FA** obrigatório para super-admin e para quem altera contas live (G-22).~~ ✅ feito.
-4. **Guarda de stop contínua** (G-01): no reconciliador, para cada posição live verificar Algo Orders abertas; se faltar
+4. ✅ **Guarda de stop contínua** (G-01) — feito: no reconciliador, para cada posição live verificar Algo Orders abertas; se faltar
    stop, recolocar (reduce-only) ou fechar, gerar `position.unprotected` (crítico) e alerta.
-5. **Limites agregados + teto live** (G-02): `max_total_notional_usdt`, `max_daily_loss_usdt`, `max_open_positions`
+5. ✅ **Limites agregados + teto live** (G-02) — feito (`RISK_WS_*`, `RISK_GLOBAL_*`, `max_capital_usdt`): `max_total_notional_usdt`, `max_daily_loss_usdt`, `max_open_positions`
    por workspace e `LIVE_MAX_NOTIONAL_USDT` global no servidor.
-6. **Liquidação e alavancagem** (G-04): limite global `LIVE_MAX_LEVERAGE` (ex.: 5) e rejeitar stop além do preço de liquidação.
+6. ✅ **Liquidação e alavancagem** (G-04) — feito (`RISK_MAX_LEVERAGE_CAP`=20, teto 50): limite global `LIVE_MAX_LEVERAGE` (ex.: 5) e rejeitar stop além do preço de liquidação.
 7. Atualizar `orjson` (G-24) e corrigir o healthcheck do `streams` (G-10).
 
 ### Fase B — Operação desassistida (≈ 1–1,5 semana)
@@ -192,7 +195,7 @@ P2 = importante para operação estável · P3 = melhoria. **Status**: Faltando 
 2. Regras Prometheus + Alertmanager (G-12): heartbeat velho, tick atrasado, peso Binance alto, divergência do reconciliador.
 3. Backups agendados, criptografados e off-site (`restic`/`rclone`), script `restore_db.sh` e teste mensal (G-13).
 4. Rotação de logs e limites de recursos no Compose (G-14); retenção de `refresh_tokens`/auditoria/alertas (G-15).
-5. Ajuste de patrimônio por transferências no kill switch (G-03) e alertas de posição ao vivo (G-06).
+5. ✅ Ajuste de patrimônio por transferências no kill switch (G-03) e alertas de posição ao vivo (G-06).
 6. Runbooks completos e **teste controlado do kill switch** em testnet e depois em live com capital mínimo (G-07, D-03).
 7. Documentar NTP/chrony e validar `CORS_ORIGINS`/`DOMAIN` no `deploy.sh` (G-08, G-23).
 

@@ -35,6 +35,7 @@ Legenda de status: **Corrigido** (com testes, em `main`) · **Pendente** (docume
 | 22 | Baixa | Hedge mode (posições LONG/SHORT simultâneas) não é suportado (ordens sem `positionSide`, posição líquida por símbolo). Decisão: **detectar e recusar** — ordens manuais live retornam 409 com instrução para mudar para one-way mode, bots falham ao iniciar com a mesma mensagem, e `POST /accounts/{id}/verify` retorna `hedge_mode=true`/`ok=false`. | `services/position_mode.py`, `services/manual_trading.py`, `services/jobs.py`, `api/v1/endpoints/accounts.py` | Corrigido (recusado com erro claro) |
 | 23 | Baixa | bcrypt rodava no event loop (~200 ms bloqueados por login/cadastro/troca de senha, congelando WebSockets e outras requisições). Agora em thread (`anyio.to_thread`). | `core/security.py`, `api/v1/endpoints/auth.py` | Corrigido |
 | 24 | Info | Dependências transitivas do Tailwind 3 (`braces`, `micromatch`, `postcss-selector-parser`) com avisos do `npm audit` — apenas em tempo de build, sem correção upstream de `braces`; resolver exige migrar para Tailwind 4. | `frontend/package-lock.json` | Aceito |
+| 25 | Média | Dimensionamento automático usava o stop sem arredondar e a checagem de risco o stop arredondado ao *tick*: entradas *short* com `risk_fraction=1` em símbolos de preço baixo eram rejeitadas (`risk 100.51 > allowed 100.00`). Agora o stop é arredondado antes do dimensionamento, LIMIT é dimensionada pelo preço limite e a quantidade desce de *step* até caber no risco. | `services/execution.py` | Corrigido |
 
 ## 2. Dependências e código suspeito
 
